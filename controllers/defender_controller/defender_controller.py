@@ -75,15 +75,15 @@ receiver.enable(timestep)
 # Read the robot name set in the world file to determine which team this
 # instance belongs to, then configure team-specific patrol waypoints and comms channel.
 robot_name = robot.getName()
-team       = 'blue' if 'blue' in robot_name else 'red'
+team       = 'a' if 'team_a' in robot_name else 'b'
 
-if team == 'blue':
-    # Blue defender patrols the left half (negative x)
+if team == 'a':
+    # Team A defender patrols the left half (negative x)
     PATROL_WAYPOINTS = [(-0.3, 0.2), (-0.3, -0.2), (-0.6, -0.2), (-0.6, 0.2)]
     emitter.setChannel(1)
     receiver.setChannel(1)
 else:
-    # Red defender patrols the right half (positive x)
+    # Team B defender patrols the right half (positive x)
     PATROL_WAYPOINTS = [(0.3, -0.2), (0.3, 0.2), (0.6, 0.2), (0.6, -0.2)]
     emitter.setChannel(2)
     receiver.setChannel(2)

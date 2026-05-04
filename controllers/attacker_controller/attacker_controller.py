@@ -19,8 +19,9 @@ AVOIDANCE_LIMIT    = 3.0    # seconds of continuous avoidance before RECOVERY tr
 ESCAPE_STEPS          = 20  # timesteps to sustain turn direction after clearing obstacle
 RECOVERY_REVERSE_STEPS = 30  # timesteps to reverse during recovery
 RECOVERY_TURN_STEPS    = 45  # timesteps to turn after reversing
-WAYPOINT_TOLERANCE = 0.07   # metres — close enough to consider a waypoint reached
-COMM_TIMEOUT       = 5.0    # seconds without teammate heartbeat before SOLO mode
+WAYPOINT_TOLERANCE  = 0.07  # metres — close enough to consider a waypoint reached
+FLAG_PIXEL_THRESHOLD = 5    # minimum matching pixels in camera frame to confirm flag is visible
+COMM_TIMEOUT        = 5.0   # seconds without teammate heartbeat before SOLO mode
 WHEEL_RADIUS       = 0.0205 # metres (e-puck hardware spec)
 AXLE_LENGTH        = 0.052  # metres (e-puck hardware spec)
 
@@ -74,18 +75,20 @@ receiver.enable(timestep)
 # Read the robot name set in the world file to determine which team this
 # instance belongs to, then configure team-specific waypoints and comms channel.
 robot_name = robot.getName()
-team       = 'blue' if 'blue' in robot_name else 'red'
+team       = 'a' if 'team_a' in robot_name else 'b'
 
-if team == 'blue':
-    # Blue spawns on the left — attacks rightward toward the red flag
+if team == 'a':
+    # Team A spawns on the left — attacks rightward toward the green flag (right base)
     ENEMY_BASE_WAYPOINTS = [(0.5, 0.0), (0.85, 0.0)]
     HOME_BASE_WAYPOINTS  = [(-0.85, 0.0), (-0.5, 0.0)]
+    ENEMY_FLAG_COLOUR = 'GREEN'
     emitter.setChannel(1)
     receiver.setChannel(1)
 else:
-    # Red spawns on the right — attacks leftward toward the blue flag
+    # Team B spawns on the right — attacks leftward toward the yellow flag (left base)
     ENEMY_BASE_WAYPOINTS = [(-0.5, 0.0), (-0.85, 0.0)]
     HOME_BASE_WAYPOINTS  = [(0.85, 0.0), (0.5, 0.0)]
+    ENEMY_FLAG_COLOUR = 'YELLOW'
     emitter.setChannel(2)
     receiver.setChannel(2)
 
@@ -124,6 +127,7 @@ return_waypoint_index = len(HOME_BASE_WAYPOINTS) - 1
 # Simulation clock and comms tracking
 sim_time            = 0.0
 last_heartbeat_time = 0.0
+last_status_print   = 0.0  # tracks when the last search status line was printed
 
 # Route memory — list of waypoint indices where the attacker was intercepted
 blocked_routes = []
@@ -204,8 +208,35 @@ def obstacle_detected(readings):
 
 
 def detect_flag_in_camera():
-    """Scan camera image for red pixels indicating the enemy flag."""
-    # TODO: implement HSV segmentation — isolate red hue band in camera.getImage()
+    """
+    Scan every camera pixel for the enemy flag colour.
+    Blue team looks for green pixels (enemy green flag at right base).
+    Red team looks for yellow pixels (enemy yellow flag at left base).
+    Returns True if at least FLAG_PIXEL_THRESHOLD matching pixels are found.
+    """
+    image   = camera.getImage()
+    w       = camera.getWidth()
+    h       = camera.getHeight()
+    matches = 0
+
+    for y in range(h):
+        for x in range(w):
+            r = camera.imageGetRed(image, w, x, y)
+            g = camera.imageGetGreen(image, w, x, y)
+            b = camera.imageGetBlue(image, w, x, y)
+
+            if team == 'a':
+                # Green flag: dominant green, low red and blue
+                if g > 150 and r < 80 and b < 80:
+                    matches += 1
+            else:
+                # Yellow flag: high red and green, low blue
+                if r > 150 and g > 150 and b < 80:
+                    matches += 1
+
+            if matches >= FLAG_PIXEL_THRESHOLD:
+                return True
+
     return False
 
 
@@ -296,10 +327,31 @@ def run_recovery():
         recovery_counter -= 1
 
 
+# ── Flag Capture ──────────────────────────────────────────────
+def check_flag_capture():
+    """
+    Runs every main loop tick regardless of BT state — including during AVOID_OBSTACLE.
+    Uses camera colour detection to confirm the enemy flag is visible.
+    Only active once intermediate waypoints are cleared so the robot is in the right zone.
+    """
+    global has_flag
+
+    if has_flag:
+        return
+
+    # Only check once intermediate waypoints are cleared
+    if seek_waypoint_index < len(ENEMY_BASE_WAYPOINTS) - 1:
+        return
+
+    if detect_flag_in_camera():
+        has_flag = True
+        print(f"[{robot_name}] captured the {ENEMY_FLAG_COLOUR} flag!")
+
+
 # ── BT State: SEEK_FLAG ───────────────────────────────────────
 def run_seek_flag():
-    """Navigate through ENEMY_BASE_WAYPOINTS; skip routes flagged as blocked."""
-    global seek_waypoint_index, has_flag
+    """Navigate through ENEMY_BASE_WAYPOINTS toward the enemy flag."""
+    global seek_waypoint_index
 
     # Skip any waypoint index previously marked as blocked
     while seek_waypoint_index in blocked_routes and seek_waypoint_index < len(ENEMY_BASE_WAYPOINTS) - 1:
@@ -308,11 +360,8 @@ def run_seek_flag():
     target = ENEMY_BASE_WAYPOINTS[seek_waypoint_index]
 
     if distance_to(*target) < WAYPOINT_TOLERANCE:
-        # Advance to next waypoint, or check for flag at final position
         if seek_waypoint_index < len(ENEMY_BASE_WAYPOINTS) - 1:
             seek_waypoint_index += 1
-        elif detect_flag_in_camera():
-            has_flag = True
 
     steer_toward(*target)
 
@@ -387,6 +436,13 @@ while robot.step(timestep) != -1:
     check_teammate_comms()
 
     proximity_readings = read_proximity()
+    check_flag_capture()
+
+    # Print a search status line every 3 seconds until the flag is captured
+    if not has_flag and sim_time - last_status_print >= 3.0:
+        print(f"[{robot_name}] searching for the {ENEMY_FLAG_COLOUR} flag...")
+        last_status_print = sim_time
+
     current_state      = select_state(proximity_readings)
 
     if current_state == State.AVOID_OBSTACLE:
