@@ -1,0 +1,6 @@
+{
+    "python.analysis.extraPaths": [
+        "C:\\Program Files\\Webots\\lib\\controller\\python"
+    ],
+    "python.defaultInterpreterPath": "C:\\Program Files\\Webots\\msys64\\mingw64\\bin\\python3.exe"
+}
