@@ -6,29 +6,195 @@ EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/project
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/robots/gctronic/e-puck/protos/E-puck.proto"
 
 WorldInfo {
+  title "PROWL-R CTF"
 }
 Viewpoint {
-  orientation -0.554974330281367 0.5907912542673114 0.5856357115221075 2.0266565873295765
-  position -2.2454465418815655e-05 -2.2454528911735853e-05 2.058911320897325
+  orientation -0.5588167212284731 0.5830858941529885 0.5896903527405454 2.0384099858815126
+  position -0.007176134038108864 -0.00709405505363786 3.4993742270029546
 }
 TexturedBackground {
 }
 TexturedBackgroundLight {
 }
 RectangleArena {
+  floorSize 2 1
+  wallHeight 0.05
+}
+Solid {
+  translation 0 0 0.001
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+        }
+      }
+      geometry Box {
+        size 0.01 1 0.001
+      }
+    }
+  ]
+  name "centre_line"
+}
+Solid {
+  translation -0.85 0 0.05
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0 0 1
+          emissiveColor 0 0 0.4
+        }
+      }
+      geometry Box {
+        size 0.04 0.04 0.1
+      }
+    }
+  ]
+  name "blue_flag"
+}
+Solid {
+  translation 0.85 0 0.05
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 1 0 0
+          emissiveColor 0.4 0 0
+        }
+      }
+      geometry Box {
+        size 0.04 0.04 0.1
+      }
+    }
+  ]
+  name "red_flag"
+}
+Solid {
+  translation 0.2 0.2 0.05
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.4 0.4 0.4
+        }
+      }
+      geometry Box {
+        size 0.1 0.1 0.1
+      }
+    }
+  ]
+  name "obstacle_1"
+  boundingObject Box {
+    size 0.1 0.1 0.1
+  }
+}
+Solid {
+  translation 0.2 -0.2 0.05
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.4 0.4 0.4
+        }
+      }
+      geometry Box {
+        size 0.1 0.1 0.1
+      }
+    }
+  ]
+  name "obstacle_2"
+  boundingObject Box {
+    size 0.1 0.1 0.1
+  }
+}
+Solid {
+  translation -0.34 0.26 0.05
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.4 0.4 0.4
+        }
+      }
+      geometry Box {
+        size 0.1 0.1 0.1
+      }
+    }
+  ]
+  name "obstacle_3"
+  boundingObject Box {
+    size 0.1 0.1 0.1
+  }
+}
+Solid {
+  translation -0.35 -0.25 0.05
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.4 0.4 0.4
+        }
+      }
+      geometry Box {
+        size 0.1 0.1 0.1
+      }
+    }
+  ]
+  name "obstacle_4"
+  boundingObject Box {
+    size 0.1 0.1 0.1
+  }
+}
+Solid {
+  translation 0 0 0.05
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.4 0.4 0.4
+        }
+      }
+      geometry Box {
+        size 0.1 0.1 0.1
+      }
+    }
+  ]
+  name "obstacle_5"
+  boundingObject Box {
+    size 0.1 0.1 0.1
+  }
 }
 E-puck {
-  hidden position_0_0 11.105690562381362
-  hidden position_0_1 12.19818101423318
-  hidden linearVelocity_0 -0.00015738923940093646 -6.323777531931087e-05 7.6047182066182e-09
-  hidden angularVelocity_0 0.0042159966851507335 -0.010492945906598584 2.54288568916617e-08
-  hidden rotation_1 0 -1 0 1.460680051977811
-  hidden linearVelocity_1 -0.00020985346121361992 -8.431750311145855e-05 -1.8925092812871746e-07
-  hidden angularVelocity_1 0.004215881788909022 -0.010492658832497762 2.5172139074350067e-08
-  hidden rotation_2 0 -1 0 0.3681896001259932
-  hidden linearVelocity_2 -0.00020985330059202862 -8.431791260127698e-05 -1.046954785533043e-07
-  hidden angularVelocity_2 0.004215880764613832 -0.010492658757752916 2.564857991269203e-08
-  translation 0.22579656117204416 0.0437471988934347 -6.39492215886682e-05
-  rotation 0.0004906117468725446 -0.0025330884870436716 0.9999966713758754 0.3821970027674048
+  hidden position_0_0 373.6652094559355
+  hidden position_0_1 373.3684447409418
+  hidden linearVelocity_0 0.02036506905150941 0.017596030588649895 -7.929007975396477e-05
+  hidden angularVelocity_0 -0.003410971621895786 -0.0030641806921759863 0.6528281618218441
+  hidden rotation_1 0 -1 0 3.325908974839692
+  hidden linearVelocity_1 0.007795885240440928 0.006493870403121148 0.00015012827726170773
+  hidden angularVelocity_1 -3.929834021997312 4.898159379872245 0.6032139662472378
+  hidden rotation_2 0 -0.9999999999999999 0 3.6226736898333773
+  hidden linearVelocity_2 0.033106721015202525 0.02876944634683832 6.37243528980295e-06
+  hidden angularVelocity_2 -1.3882946977068378 1.7205391684496742 0.6477715216068562
+  translation 0.3251401614288506 -0.15247167424352784 -0.00010409826016074056
+  rotation -0.002365745095012374 -0.0007993151167343845 0.9999968821678844 0.7019886327654911
+  name "blue_attacker"
   controller "attacker_controller"
+}
+E-puck {
+  hidden position_0_0 349.05420076219286
+  hidden position_0_1 519.8288965284273
+  hidden linearVelocity_0 0.004371725087139754 -0.010918545928937004 9.89889999438275e-05
+  hidden angularVelocity_0 -0.0012763948113629464 0.0029850149952117076 0.1421777387507686
+  hidden rotation_1 0 -1 0 2.8041764398639795
+  hidden linearVelocity_1 0.0029884112302314397 -0.008778743573840661 -5.656466482895115e-05
+  hidden angularVelocity_1 5.876306420560562 2.214741678140636 0.1042298406764515
+  hidden rotation_2 0 0.9999999999999999 0 4.60770133970123
+  hidden linearVelocity_2 0.005969216780767536 -0.013550461480118979 -6.126332439371236e-05
+  hidden angularVelocity_2 0.6914528590182207 0.29307603125580917 0.12556331218071493
+  translation 0.635286450564244 -0.26754619715382477 -0.00011364414997309079
+  rotation 0.0010971593110793252 -0.0007313298834955932 0.9999991306986461 -1.2072872948732831
+  name "red_attacker"
+  controller "attacker_controller"
+  emitter_channel 2
+  receiver_channel 2
 }

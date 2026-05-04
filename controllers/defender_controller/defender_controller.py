@@ -1,7 +1,7 @@
 # =============================================================
-# PROWL-R | attacker_controller.py
-# Role: Seeks the enemy flag and returns it to home base.
-#       Evades defenders detected via camera.
+# PROWL-R | defender_controller.py
+# Role: Patrols the home zone, detects intruders via camera,
+#       chases and tags them, then returns to patrol.
 # Team: Oscar Chia, Blair Fenton, Lakshay
 # =============================================================
 
@@ -20,6 +20,7 @@ ESCAPE_STEPS          = 20  # timesteps to sustain turn direction after clearing
 RECOVERY_REVERSE_STEPS = 30  # timesteps to reverse during recovery
 RECOVERY_TURN_STEPS    = 45  # timesteps to turn after reversing
 WAYPOINT_TOLERANCE = 0.07   # metres — close enough to consider a waypoint reached
+TAG_RANGE          = 0.1    # metres — attacker must be this close to be tagged
 COMM_TIMEOUT       = 5.0    # seconds without teammate heartbeat before SOLO mode
 WHEEL_RADIUS       = 0.0205 # metres (e-puck hardware spec)
 AXLE_LENGTH        = 0.052  # metres (e-puck hardware spec)
@@ -29,9 +30,9 @@ AXLE_LENGTH        = 0.052  # metres (e-puck hardware spec)
 class State(Enum):
     AVOID_OBSTACLE = 1  # highest priority — reactive collision avoidance
     RECOVERY       = 2  # escape stuck or avoidance-loop situations
-    SEEK_FLAG      = 3  # default — navigate toward enemy flag via waypoints
-    EVADE_DEFENDER = 4  # defender spotted in camera — take evasive action
-    RETURN_TO_BASE = 5  # flag captured — navigate home
+    PATROL_ZONE    = 3  # default — sweep patrol waypoints and monitor camera
+    CHASE_INTRUDER = 4  # intruder spotted — pursue and attempt to tag
+    RETURN_TO_POST = 5  # intruder tagged or lost — return to patrol route
 
 
 # ── Robot & Sensor Initialisation ────────────────────────────
@@ -60,7 +61,7 @@ right_encoder = robot.getDevice('right wheel sensor')
 left_encoder.enable(timestep)
 right_encoder.enable(timestep)
 
-# RGB camera — used for flag and opponent colour detection
+# RGB camera — used for intruder colour detection
 camera = robot.getDevice('camera')
 camera.enable(timestep)
 
@@ -72,28 +73,29 @@ receiver.enable(timestep)
 
 # ── Team Initialisation ───────────────────────────────────────
 # Read the robot name set in the world file to determine which team this
-# instance belongs to, then configure team-specific waypoints and comms channel.
+# instance belongs to, then configure team-specific patrol waypoints and comms channel.
 robot_name = robot.getName()
 team       = 'blue' if 'blue' in robot_name else 'red'
 
 if team == 'blue':
-    # Blue spawns on the left — attacks rightward toward the red flag
-    ENEMY_BASE_WAYPOINTS = [(0.5, 0.0), (0.85, 0.0)]
-    HOME_BASE_WAYPOINTS  = [(-0.85, 0.0), (-0.5, 0.0)]
+    # Blue defender patrols the left half (negative x)
+    PATROL_WAYPOINTS = [(-0.3, 0.2), (-0.3, -0.2), (-0.6, -0.2), (-0.6, 0.2)]
     emitter.setChannel(1)
     receiver.setChannel(1)
 else:
-    # Red spawns on the right — attacks leftward toward the blue flag
-    ENEMY_BASE_WAYPOINTS = [(-0.5, 0.0), (-0.85, 0.0)]
-    HOME_BASE_WAYPOINTS  = [(0.85, 0.0), (0.5, 0.0)]
+    # Red defender patrols the right half (positive x)
+    PATROL_WAYPOINTS = [(0.3, -0.2), (0.3, 0.2), (0.6, 0.2), (0.6, -0.2)]
     emitter.setChannel(2)
     receiver.setChannel(2)
 
+# Return destination after a chase — first waypoint in the patrol loop
+HOME_POST = PATROL_WAYPOINTS[0]
+
 
 # ── Agent State Variables ─────────────────────────────────────
-current_state = State.SEEK_FLAG
-has_flag      = False
-solo_mode     = False  # True when teammate comms have timed out
+current_state   = State.PATROL_ZONE
+intruder_tagged = False
+solo_mode       = False  # True when teammate comms have timed out
 
 # Odometry — pose estimate updated every timestep
 pose_x         = 0.0
@@ -117,16 +119,15 @@ escape_turn_left = True
 recovery_phase   = 'reverse'
 recovery_counter = 0
 
-# Waypoint navigation indices
-seek_waypoint_index   = 0
-return_waypoint_index = len(HOME_BASE_WAYPOINTS) - 1
+# Patrol waypoint index — cycles through PATROL_WAYPOINTS
+patrol_index = 0
 
 # Simulation clock and comms tracking
 sim_time            = 0.0
 last_heartbeat_time = 0.0
 
-# Route memory — list of waypoint indices where the attacker was intercepted
-blocked_routes = []
+# Adaptive patrol — tracks which side attackers have historically approached from
+approach_history = {'left': 0, 'right': 0}
 
 
 # ── Odometry ─────────────────────────────────────────────────
@@ -203,22 +204,26 @@ def obstacle_detected(readings):
     return any(v > OBSTACLE_THRESHOLD for v in front_arc)
 
 
-def detect_flag_in_camera():
-    """Scan camera image for red pixels indicating the enemy flag."""
+def detect_intruder_in_camera():
+    """Scan camera image for red robot pixels indicating an opposing attacker."""
     # TODO: implement HSV segmentation — isolate red hue band in camera.getImage()
     return False
 
 
-def detect_defender_in_camera():
-    """Scan camera image for blue robot pixels indicating an opposing defender."""
-    # TODO: implement HSV segmentation — isolate blue hue band in camera.getImage()
-    return False
+def get_intruder_camera_offset():
+    """
+    Return the horizontal pixel offset of the intruder from the camera centre.
+    Negative = intruder is left of centre, positive = right of centre.
+    Used to steer the chase toward the intruder's position.
+    """
+    # TODO: implement centroid calculation from HSV-segmented red pixels
+    return 0.0
 
 
 # ── Communication ─────────────────────────────────────────────
 def broadcast_status():
-    """Send position, heading, time, and flag status to teammate as a CSV string."""
-    message = f"{pose_x},{pose_y},{pose_theta},{sim_time},{int(has_flag)}"
+    """Send position, heading, time, and tag status to teammate as a CSV string."""
+    message = f"{pose_x},{pose_y},{pose_theta},{sim_time},{int(intruder_tagged)}"
     emitter.send(message.encode('utf-8'))
 
 
@@ -249,6 +254,17 @@ def check_if_stuck():
         if moved < STUCK_DISTANCE:
             return True
     return False
+
+
+# ── Adaptive Patrol Bias ──────────────────────────────────────
+def biased_patrol_index():
+    """
+    Return the patrol waypoint index that biases coverage toward the side
+    attackers have historically approached from most often.
+    Defenders shift patrol weight to cut off favoured attacker routes.
+    """
+    # TODO: map approach_history counts to a preferred waypoint index
+    return patrol_index
 
 
 # ── BT State: AVOID_OBSTACLE ──────────────────────────────────
@@ -296,52 +312,58 @@ def run_recovery():
         recovery_counter -= 1
 
 
-# ── BT State: SEEK_FLAG ───────────────────────────────────────
-def run_seek_flag():
-    """Navigate through ENEMY_BASE_WAYPOINTS; skip routes flagged as blocked."""
-    global seek_waypoint_index, has_flag
+# ── BT State: PATROL_ZONE ─────────────────────────────────────
+def run_patrol_zone():
+    """Cycle through PATROL_WAYPOINTS; shift bias based on attacker history."""
+    global patrol_index
 
-    # Skip any waypoint index previously marked as blocked
-    while seek_waypoint_index in blocked_routes and seek_waypoint_index < len(ENEMY_BASE_WAYPOINTS) - 1:
-        seek_waypoint_index += 1
-
-    target = ENEMY_BASE_WAYPOINTS[seek_waypoint_index]
+    target = PATROL_WAYPOINTS[biased_patrol_index()]
 
     if distance_to(*target) < WAYPOINT_TOLERANCE:
-        # Advance to next waypoint, or check for flag at final position
-        if seek_waypoint_index < len(ENEMY_BASE_WAYPOINTS) - 1:
-            seek_waypoint_index += 1
-        elif detect_flag_in_camera():
-            has_flag = True
+        # Advance to next waypoint and re-zero pose if at a known position
+        patrol_index = (patrol_index + 1) % len(PATROL_WAYPOINTS)
+        reset_pose_to(*target, pose_theta)
 
     steer_toward(*target)
 
 
-# ── BT State: EVADE_DEFENDER ──────────────────────────────────
-def run_evade_defender():
-    """Evasive manoeuvre based on defender's position in the camera frame."""
-    # TODO: read camera image to determine defender's x-offset and steer away
-    set_wheel_speeds(MAX_SPEED, MAX_SPEED * 0.3)
+# ── BT State: CHASE_INTRUDER ──────────────────────────────────
+def run_chase_intruder():
+    """
+    Steer toward the intruder using their camera pixel offset.
+    Proximity sensors confirm a tag when the attacker is within TAG_RANGE.
+    """
+    global intruder_tagged, approach_history
 
+    offset = get_intruder_camera_offset()
 
-# ── BT State: RETURN_TO_BASE ──────────────────────────────────
-def run_return_to_base():
-    """Navigate back through HOME_BASE_WAYPOINTS to deliver the flag."""
-    global return_waypoint_index, seek_waypoint_index, has_flag
+    # Positive offset → intruder is right of centre → turn right (reduce left speed)
+    left_speed  = MAX_SPEED - offset * 3.0
+    right_speed = MAX_SPEED + offset * 3.0
+    set_wheel_speeds(left_speed, right_speed)
 
-    target = HOME_BASE_WAYPOINTS[return_waypoint_index]
-
-    if distance_to(*target) < WAYPOINT_TOLERANCE:
-        if return_waypoint_index > 0:
-            return_waypoint_index -= 1
+    # Tag confirmed by proximity — attacker must re-spawn
+    front_readings = [proximity_sensors[i].getValue() for i in [0, 7]]
+    if any(v > OBSTACLE_THRESHOLD for v in front_readings):
+        intruder_tagged = True
+        # Record which side the attacker approached from for adaptive patrol
+        if offset < 0:
+            approach_history['left'] += 1
         else:
-            # Reached home base — flag delivered, reset for next round
-            has_flag              = False
-            seek_waypoint_index   = 0
-            return_waypoint_index = len(HOME_BASE_WAYPOINTS) - 1
-            reset_pose_to(0.0, 0.0, 0.0)
+            approach_history['right'] += 1
 
-    steer_toward(*target)
+
+# ── BT State: RETURN_TO_POST ──────────────────────────────────
+def run_return_to_post():
+    """Navigate back to the patrol start point after chasing."""
+    global intruder_tagged, patrol_index
+
+    if distance_to(*HOME_POST) < WAYPOINT_TOLERANCE:
+        # Back on post — reset chase state and resume patrol
+        intruder_tagged = False
+        patrol_index    = 0
+    else:
+        steer_toward(*HOME_POST)
 
 
 # ── BT Priority Selector ──────────────────────────────────────
@@ -366,16 +388,16 @@ def select_state(readings):
     if check_if_stuck() or avoidance_timer >= AVOIDANCE_LIMIT:
         return State.RECOVERY
 
-    # Priority 3 — deliver flag if already carrying it
-    if has_flag:
-        return State.RETURN_TO_BASE
+    # Priority 3 — return to post after a completed or lost chase
+    if intruder_tagged:
+        return State.RETURN_TO_POST
 
-    # Priority 4 — evade if a defender is visible
-    if detect_defender_in_camera():
-        return State.EVADE_DEFENDER
+    # Priority 4 — chase if an intruder is visible in camera
+    if detect_intruder_in_camera():
+        return State.CHASE_INTRUDER
 
-    # Default — seek the enemy flag
-    return State.SEEK_FLAG
+    # Default — patrol the home zone
+    return State.PATROL_ZONE
 
 
 # ── Main Control Loop ─────────────────────────────────────────
@@ -400,9 +422,9 @@ while robot.step(timestep) != -1:
         escape_counter -= 1
     elif current_state == State.RECOVERY:
         run_recovery()
-    elif current_state == State.SEEK_FLAG:
-        run_seek_flag()
-    elif current_state == State.EVADE_DEFENDER:
-        run_evade_defender()
-    elif current_state == State.RETURN_TO_BASE:
-        run_return_to_base()
+    elif current_state == State.PATROL_ZONE:
+        run_patrol_zone()
+    elif current_state == State.CHASE_INTRUDER:
+        run_chase_intruder()
+    elif current_state == State.RETURN_TO_POST:
+        run_return_to_post()
