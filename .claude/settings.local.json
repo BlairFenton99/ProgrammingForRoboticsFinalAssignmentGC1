@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Recurse \"c:\\\\Users\\\\Oscar\\\\Documents\\\\webots_projects\\\\ProgrammingForRoboticsFinalAssignmentGC1\")",
+      "Bash(Select-Object FullName)",
+      "PowerShell(Get-ChildItem -Recurse \"c:\\\\Users\\\\Oscar\\\\Documents\\\\webots_projects\\\\ProgrammingForRoboticsFinalAssignmentGC1\" | ForEach-Object { $_.FullName })",
+      "PowerShell(New-Item -ItemType Directory -Path \"c:\\\\Users\\\\Oscar\\\\Documents\\\\webots_projects\\\\ProgrammingForRoboticsFinalAssignmentGC1\\\\controllers\\\\defender_controller\" -Force)"
+    ]
+  }
+}
