@@ -20,7 +20,7 @@ ESCAPE_STEPS          = 20  # timesteps to sustain turn direction after clearing
 RECOVERY_REVERSE_STEPS = 30  # timesteps to reverse during recovery
 RECOVERY_TURN_STEPS    = 45  # timesteps to turn after reversing
 WAYPOINT_TOLERANCE  = 0.07  # metres — close enough to consider a waypoint reached
-FLAG_PIXEL_THRESHOLD = 5    # minimum matching pixels in camera frame to confirm flag is visible
+FLAG_PIXEL_THRESHOLD = 3    # minimum matching pixels in camera frame to confirm flag is visible
 COMM_TIMEOUT        = 5.0   # seconds without teammate heartbeat before SOLO mode
 WHEEL_RADIUS       = 0.0205 # metres (e-puck hardware spec)
 AXLE_LENGTH        = 0.052  # metres (e-puck hardware spec)
@@ -227,11 +227,11 @@ def detect_flag_in_camera():
 
             if team == 'a':
                 # Green flag: dominant green, low red and blue
-                if g > 150 and r < 80 and b < 80:
+                if g > 120 and r < 120 and b < 120:
                     matches += 1
             else:
                 # Yellow flag: high red and green, low blue
-                if r > 150 and g > 150 and b < 80:
+                if r > 120 and g > 120 and b < 120:
                     matches += 1
 
             if matches >= FLAG_PIXEL_THRESHOLD:
@@ -241,10 +241,25 @@ def detect_flag_in_camera():
 
 
 def detect_defender_in_camera():
-    """Scan camera image for blue robot pixels indicating an opposing defender."""
-    # TODO: implement HSV segmentation — isolate blue hue band in camera.getImage()
-    return False
+    """Detect opponent robot using blue colour."""
+    image = camera.getImage()
+    w = camera.getWidth()
+    h = camera.getHeight()
+    matches = 0
 
+    for y in range(h):
+        for x in range(w):
+            r = camera.imageGetRed(image, w, x, y)
+            g = camera.imageGetGreen(image, w, x, y)
+            b = camera.imageGetBlue(image, w, x, y)
+
+            if b > 120 and r < 100 and g < 120:
+                matches += 1
+
+            if matches > 8:
+                return True
+
+    return False
 
 # ── Communication ─────────────────────────────────────────────
 def broadcast_status():
