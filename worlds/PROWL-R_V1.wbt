@@ -6,52 +6,119 @@ EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/project
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/robots/gctronic/e-puck/protos/E-puck.proto"
 
 WorldInfo {
-  title "PROWL-R CTF — Defender Test"
+  title "PROWL-R Infiltration"
 }
 Viewpoint {
   orientation -0.5588167212284731 0.5830858941529885 0.5896903527405454 2.0384099858815126
-  position 0 0 3.5
+  position 0 0 4.5
 }
 TexturedBackground {
 }
 TexturedBackgroundLight {
 }
 
-# Small isolated arena for testing defender patrol + obstacle avoidance
 RectangleArena {
-  floorSize 0.4 0.8
+  floorSize 2.0 0.8
   wallHeight 0.05
 }
 
-# Orange obstacle on the patrol path — forces sideways avoidance to test RETURN_TO_PATROL
+# Red flag — Raiders' objective (east end, centre)
 Solid {
-  translation 0 0.2 0.04
+  translation 0.85 0 0.03
   children [
     Shape {
       appearance Appearance {
         material Material {
-          diffuseColor 1 0.5 0
+          diffuseColor 0.9 0 0
         }
       }
       geometry Box {
-        size 0.12 0.06 0.08
+        size 0.05 0.05 0.06
       }
     }
   ]
-  name "obstacle"
-  boundingObject Box {
-    size 0.12 0.06 0.08
-  }
+  name "red_flag"
 }
 
-# Defender — centre of arena, facing north, compass enabled
+# Raider A — west spawn, upper lane, blue marker, supervisor enabled
 E-puck {
-  name "team_a_defender"
-  translation 0 0 0
-  rotation 0 0 1 1.5708
-  controller "defender_controller"
+  name "raider_a"
+  translation -0.7 0.2 0
+  rotation 0 0 1 0
+  controller "raider_controller"
+  supervisor TRUE
   turretSlot [
     Compass {
+    }
+    Solid {
+      translation 0 0 0.025
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 0 0.3 1
+            }
+          }
+          geometry Box {
+            size 0.025 0.025 0.02
+          }
+        }
+      ]
+    }
+  ]
+}
+
+# Raider B — west spawn, lower lane, blue marker, supervisor enabled
+E-puck {
+  name "raider_b"
+  translation -0.7 -0.2 0
+  rotation 0 0 1 0
+  controller "raider_controller"
+  supervisor TRUE
+  turretSlot [
+    Compass {
+    }
+    Solid {
+      translation 0 0 0.025
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 0 0.3 1
+            }
+          }
+          geometry Box {
+            size 0.025 0.025 0.02
+          }
+        }
+      ]
+    }
+  ]
+}
+
+# Guard 1 — east zone patrol, yellow marker, no comms
+E-puck {
+  name "guard_1"
+  translation 0.3 0.2 0
+  rotation 0 0 1 1.5708
+  controller "guard_controller"
+  turretSlot [
+    Compass {
+    }
+    Solid {
+      translation 0 0 0.025
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 1 0.9 0
+            }
+          }
+          geometry Box {
+            size 0.025 0.025 0.02
+          }
+        }
+      ]
     }
   ]
 }

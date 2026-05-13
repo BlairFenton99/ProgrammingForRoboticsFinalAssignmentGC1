@@ -7,7 +7,15 @@
       "PowerShell(New-Item -ItemType Directory -Path \"c:\\\\Users\\\\Oscar\\\\Documents\\\\webots_projects\\\\ProgrammingForRoboticsFinalAssignmentGC1\\\\controllers\\\\defender_controller\" -Force)",
       "Bash(git fetch *)",
       "Bash(git merge *)",
-      "Bash(Remove-Item -Recurse -Force \"c:\\\\Users\\\\Oscar\\\\Documents\\\\webots_projects\\\\ProgrammingForRoboticsFinalAssignmentGC1\\\\controllers\\\\defender_test_controller\")"
+      "Bash(Remove-Item -Recurse -Force \"c:\\\\Users\\\\Oscar\\\\Documents\\\\webots_projects\\\\ProgrammingForRoboticsFinalAssignmentGC1\\\\controllers\\\\defender_test_controller\")",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Oscar\\\\Documents\\\\webots_projects\\\\ProgrammingForRoboticsFinalAssignmentGC1\" -Recurse -Name)",
+      "Bash(Sort-Object)",
+      "Bash(mkdir -p \"c:/Users/Oscar/Documents/webots_projects/ProgrammingForRoboticsFinalAssignmentGC1/controllers/raider_controller\" \"c:/Users/Oscar/Documents/webots_projects/ProgrammingForRoboticsFinalAssignmentGC1/controllers/guard_controller\")",
+      "Bash(Remove-Item -Recurse -Force \"c:/Users/Oscar/Documents/webots_projects/ProgrammingForRoboticsFinalAssignmentGC1/controllers/attacker_controller\" \"c:/Users/Oscar/Documents/webots_projects/ProgrammingForRoboticsFinalAssignmentGC1/controllers/defender_controller\")",
+      "Bash(cmd.exe /c \"rd /s /q \\\\\"c:\\\\Users\\\\Oscar\\\\Documents\\\\webots_projects\\\\ProgrammingForRoboticsFinalAssignmentGC1\\\\controllers\\\\attacker_controller\\\\\" && rd /s /q \\\\\"c:\\\\Users\\\\Oscar\\\\Documents\\\\webots_projects\\\\ProgrammingForRoboticsFinalAssignmentGC1\\\\controllers\\\\defender_controller\\\\\"\")"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\Oscar\\Documents\\webots_projects\\ProgrammingForRoboticsFinalAssignmentGC1\\controllers"
     ]
   }
 }

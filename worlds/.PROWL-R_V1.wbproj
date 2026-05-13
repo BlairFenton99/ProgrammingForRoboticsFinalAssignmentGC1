@@ -7,4 +7,6 @@ centralWidgetVisible: 1
 orthographicViewHeight: 1
 textFiles: -1
 consoles: Console:All:All
-renderingDevicePerspectives: test_defender:camera;1;1;0;0
+renderingDevicePerspectives: guard_1:camera;1;1;0;0
+renderingDevicePerspectives: raider_a:camera;1;1;0;0
+renderingDevicePerspectives: raider_b:camera;1;1;0;0
