@@ -22,6 +22,29 @@ RectangleArena {
   wallHeight 0.05
 }
 
+# Short wall hiding the flag from direct frontal view
+# Centred at y=0 between Raiders' approach lanes and the flag.
+# 0.28 m wide leaves ~0.26 m gaps to the arena walls on each side.
+Solid {
+  translation 0.73 0 0.035
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.35 0.35 0.35
+        }
+      }
+      geometry Box {
+        size 0.02 0.28 0.07
+      }
+    }
+  ]
+  name "flag_wall"
+  boundingObject Box {
+    size 0.02 0.28 0.07
+  }
+}
+
 # Red flag — Raiders' objective (east end, centre)
 Solid {
   translation 0.85 0 0.03
@@ -38,6 +61,42 @@ Solid {
     }
   ]
   name "red_flag"
+}
+
+# Raider A home base — blue floor pad, visual only
+Solid {
+  translation -0.7 0.2 0.001
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.1 0.3 0.9
+        }
+      }
+      geometry Box {
+        size 0.40 0.40 0.002
+      }
+    }
+  ]
+  name "base_a"
+}
+
+# Raider B home base — blue floor pad, visual only
+Solid {
+  translation -0.7 -0.2 0.001
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.1 0.3 0.9
+        }
+      }
+      geometry Box {
+        size 0.40 0.40 0.002
+      }
+    }
+  ]
+  name "base_b"
 }
 
 # Raider A — west spawn, upper lane, blue marker, supervisor enabled
