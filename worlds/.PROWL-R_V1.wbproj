@@ -7,5 +7,4 @@ centralWidgetVisible: 1
 orthographicViewHeight: 1
 textFiles: -1
 consoles: Console:All:All
-renderingDevicePerspectives: team_a_attacker:camera;1;1;0;0
-renderingDevicePerspectives: team_b_attacker:camera;1;4.69231;0;0
+renderingDevicePerspectives: team_a_defender:camera;1;1;0;0

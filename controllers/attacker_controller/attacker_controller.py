@@ -22,6 +22,7 @@ RECOVERY_TURN_STEPS    = 45  # timesteps to turn after reversing
 WAYPOINT_TOLERANCE  = 0.07  # metres — close enough to consider a waypoint reached
 FLAG_PIXEL_THRESHOLD = 3    # minimum matching pixels in camera frame to confirm flag is visible
 COMM_TIMEOUT        = 5.0   # seconds without teammate heartbeat before SOLO mode
+SEEK_TIMEOUT        = 25.0  # seconds in SEEK_FLAG before returning home (tagged proxy until defenders are live)
 WHEEL_RADIUS       = 0.0205 # metres (e-puck hardware spec)
 AXLE_LENGTH        = 0.052  # metres (e-puck hardware spec)
 
@@ -79,15 +80,21 @@ team       = 'a' if 'team_a' in robot_name else 'b'
 
 if team == 'a':
     # Team A spawns on the left — attacks rightward toward the green flag (right base)
-    ENEMY_BASE_WAYPOINTS = [(0.5, 0.0), (0.85, 0.0)]
-    HOME_BASE_WAYPOINTS  = [(-0.85, 0.0), (-0.5, 0.0)]
+    HOME_SPAWN        = (-0.5, 0.0)
+    ALL_ROUTES        = [
+        [(0.3,  0.3), (0.85, 0.0)],   # route 0: top arc through enemy half
+        [(0.3, -0.3), (0.85, 0.0)],   # route 1: bottom arc through enemy half
+    ]
     ENEMY_FLAG_COLOUR = 'GREEN'
     emitter.setChannel(1)
     receiver.setChannel(1)
 else:
     # Team B spawns on the right — attacks leftward toward the yellow flag (left base)
-    ENEMY_BASE_WAYPOINTS = [(-0.5, 0.0), (-0.85, 0.0)]
-    HOME_BASE_WAYPOINTS  = [(0.85, 0.0), (0.5, 0.0)]
+    HOME_SPAWN        = (0.5, 0.0)
+    ALL_ROUTES        = [
+        [(-0.3, -0.3), (-0.85, 0.0)],  # route 0: top arc through enemy half (mirrored)
+        [(-0.3,  0.3), (-0.85, 0.0)],  # route 1: bottom arc through enemy half (mirrored)
+    ]
     ENEMY_FLAG_COLOUR = 'YELLOW'
     emitter.setChannel(2)
     receiver.setChannel(2)
@@ -120,17 +127,19 @@ escape_turn_left = True
 recovery_phase   = 'reverse'
 recovery_counter = 0
 
-# Waypoint navigation indices
-seek_waypoint_index   = 0
-return_waypoint_index = len(HOME_BASE_WAYPOINTS) - 1
+# Route and waypoint tracking
+current_route       = 0     # index into ALL_ROUTES; switched on each return to base
+seek_waypoint_index = 0     # progress through current route's waypoints
+was_tagged          = False # True if seek timed out — triggers route switch on respawn
+seek_elapsed        = 0.0   # seconds spent in SEEK_FLAG this run
+
+# Last known y-position of the enemy attacker as reported by the friendly defender
+last_intruder_y = 0.0
 
 # Simulation clock and comms tracking
 sim_time            = 0.0
 last_heartbeat_time = 0.0
 last_status_print   = 0.0  # tracks when the last search status line was printed
-
-# Route memory — list of waypoint indices where the attacker was intercepted
-blocked_routes = []
 
 
 # ── Odometry ─────────────────────────────────────────────────
@@ -263,21 +272,30 @@ def detect_defender_in_camera():
 
 # ── Communication ─────────────────────────────────────────────
 def broadcast_status():
-    """Send position, heading, time, and flag status to teammate as a CSV string."""
-    message = f"{pose_x},{pose_y},{pose_theta},{sim_time},{int(has_flag)}"
+    """Send position, heading, time, flag status, and current route index to teammate."""
+    message = f"{pose_x},{pose_y},{pose_theta},{sim_time},{int(has_flag)},{current_route}"
     emitter.send(message.encode('utf-8'))
 
 
 def check_teammate_comms():
-    """Read incoming packets; switch to SOLO mode if heartbeat times out."""
-    global last_heartbeat_time, solo_mode
+    """
+    Read incoming packets from the friendly defender.
+    Defender broadcast format: pose_x, pose_y, pose_theta, sim_time, intruder_tagged, intruder_x, intruder_y
+    Extracts last known enemy y-position to inform route selection.
+    """
+    global last_heartbeat_time, solo_mode, last_intruder_y
 
     while receiver.getQueueLength() > 0:
-        receiver.getString()  # packet contents used once coordination logic is implemented
+        parts = receiver.getString().split(',')
         last_heartbeat_time = sim_time
+        # Parse last known enemy y-position broadcast by the friendly defender
+        if len(parts) >= 7:
+            try:
+                last_intruder_y = float(parts[6])
+            except ValueError:
+                pass
         receiver.nextPacket()
 
-    # No message for COMM_TIMEOUT seconds → assume teammate is offline
     solo_mode = (sim_time - last_heartbeat_time > COMM_TIMEOUT)
 
 
@@ -295,6 +313,24 @@ def check_if_stuck():
         if moved < STUCK_DISTANCE:
             return True
     return False
+
+
+# ── Route Selection ───────────────────────────────────────────
+def select_route():
+    """
+    Pick the safer route into enemy territory using comms data and tag history.
+    If the friendly defender recently reported seeing the enemy attacker in the
+    top half (y > 0), take the bottom route to avoid crossing their path, and
+    vice versa. Falls back to alternating routes when no defender data is available.
+    """
+    if abs(last_intruder_y) > 0.1:
+        chosen = 0 if last_intruder_y < 0 else 1
+        label  = 'top' if chosen == 0 else 'bottom'
+        print(f"[{robot_name}] route chosen by comms: {label} (enemy last at y={last_intruder_y:.2f})")
+        return chosen
+    chosen = 1 - current_route
+    print(f"[{robot_name}] route alternated: {'top' if chosen == 0 else 'bottom'}")
+    return chosen
 
 
 # ── BT State: AVOID_OBSTACLE ──────────────────────────────────
@@ -354,28 +390,26 @@ def check_flag_capture():
     if has_flag:
         return
 
-    # Only check once intermediate waypoints are cleared
-    if seek_waypoint_index < len(ENEMY_BASE_WAYPOINTS) - 1:
+    # Only check once all intermediate waypoints on the current route are cleared
+    if seek_waypoint_index < len(ALL_ROUTES[current_route]) - 1:
         return
 
     if detect_flag_in_camera():
-        has_flag = True
-        print(f"[{robot_name}] captured the {ENEMY_FLAG_COLOUR} flag!")
+        has_flag   = True
+        route_name = 'top' if current_route == 0 else 'bottom'
+        print(f"[{robot_name}] captured the {ENEMY_FLAG_COLOUR} flag via {route_name} route!")
 
 
 # ── BT State: SEEK_FLAG ───────────────────────────────────────
 def run_seek_flag():
-    """Navigate through ENEMY_BASE_WAYPOINTS toward the enemy flag."""
+    """Navigate through the currently selected route toward the enemy flag."""
     global seek_waypoint_index
 
-    # Skip any waypoint index previously marked as blocked
-    while seek_waypoint_index in blocked_routes and seek_waypoint_index < len(ENEMY_BASE_WAYPOINTS) - 1:
-        seek_waypoint_index += 1
-
-    target = ENEMY_BASE_WAYPOINTS[seek_waypoint_index]
+    route  = ALL_ROUTES[current_route]
+    target = route[seek_waypoint_index]
 
     if distance_to(*target) < WAYPOINT_TOLERANCE:
-        if seek_waypoint_index < len(ENEMY_BASE_WAYPOINTS) - 1:
+        if seek_waypoint_index < len(route) - 1:
             seek_waypoint_index += 1
 
     steer_toward(*target)
@@ -390,22 +424,26 @@ def run_evade_defender():
 
 # ── BT State: RETURN_TO_BASE ──────────────────────────────────
 def run_return_to_base():
-    """Navigate back through HOME_BASE_WAYPOINTS to deliver the flag."""
-    global return_waypoint_index, seek_waypoint_index, has_flag
+    """
+    Navigate directly to HOME_SPAWN.
+    On arrival: deliver the flag (if carrying), select the next route using
+    comms data from the friendly defender, and reset for the next seek run.
+    """
+    global has_flag, was_tagged, seek_waypoint_index, seek_elapsed, current_route
 
-    target = HOME_BASE_WAYPOINTS[return_waypoint_index]
-
-    if distance_to(*target) < WAYPOINT_TOLERANCE:
-        if return_waypoint_index > 0:
-            return_waypoint_index -= 1
-        else:
-            # Reached home base — flag delivered, reset for next round
-            has_flag              = False
-            seek_waypoint_index   = 0
-            return_waypoint_index = len(HOME_BASE_WAYPOINTS) - 1
-            reset_pose_to(0.0, 0.0, 0.0)
-
-    steer_toward(*target)
+    if distance_to(*HOME_SPAWN) < WAYPOINT_TOLERANCE:
+        if has_flag:
+            print(f"[{robot_name}] delivered the {ENEMY_FLAG_COLOUR} flag!")
+        elif was_tagged:
+            print(f"[{robot_name}] tagged — switching route")
+        has_flag            = False
+        was_tagged          = False
+        seek_waypoint_index = 0
+        seek_elapsed        = 0.0
+        current_route       = select_route()
+        reset_pose_to(0.0, 0.0, 0.0)
+    else:
+        steer_toward(*HOME_SPAWN)
 
 
 # ── BT Priority Selector ──────────────────────────────────────
@@ -430,8 +468,8 @@ def select_state(readings):
     if check_if_stuck() or avoidance_timer >= AVOIDANCE_LIMIT:
         return State.RECOVERY
 
-    # Priority 3 — deliver flag if already carrying it
-    if has_flag:
+    # Priority 3 — return home if carrying the flag or if tagged by a defender
+    if has_flag or was_tagged:
         return State.RETURN_TO_BASE
 
     # Priority 4 — evade if a defender is visible
@@ -452,6 +490,14 @@ while robot.step(timestep) != -1:
 
     proximity_readings = read_proximity()
     check_flag_capture()
+
+    # Track time spent actively seeking — acts as a tagged proxy until defenders are live
+    if current_state == State.SEEK_FLAG:
+        seek_elapsed += dt
+        if seek_elapsed >= SEEK_TIMEOUT and not has_flag:
+            was_tagged = True
+    elif current_state != State.RETURN_TO_BASE:
+        seek_elapsed = 0.0
 
     # Print a search status line every 3 seconds until the flag is captured
     if not has_flag and sim_time - last_status_print >= 3.0:
