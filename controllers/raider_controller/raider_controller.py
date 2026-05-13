@@ -24,7 +24,10 @@ WHEEL_RADIUS            = 0.0205
 AXLE_LENGTH             = 0.052
 
 FLAG_PIXEL_THRESHOLD    = 3     # red pixels to confirm flag in view
+FLAG_CAPTURE_RADIUS     = 0.30  # must be within this distance of FLAG_POS to capture
+BASE_ARRIVAL_RADIUS     = 0.20  # larger than WAYPOINT_TOLERANCE to absorb odometry drift on return
 GUARD_PIXEL_THRESHOLD   = 20    # yellow pixels to trigger EVADE_GUARD
+EVADE_GUARD_MIN_STEPS   = 15    # minimum timesteps to stay in EVADE_GUARD (anti-oscillation)
 TAG_PIXEL_THRESHOLD     = 200   # yellow pixels to trigger respawn (~10% of 52×39 frame)
 GUARD_SEEN_RATE         = 0.5   # min seconds between GUARD_SEEN broadcasts
 HEARTBEAT_RATE          = 0.5   # seconds between HEARTBEAT broadcasts
@@ -130,6 +133,9 @@ last_heartbeat_time  = 0.0
 last_hb_broadcast    = 0.0
 last_guard_broadcast = 0.0
 yield_counter        = 0
+evade_guard_steps    = 0   # counts down after EVADE_GUARD triggers; holds state until 0
+escort_mode          = False  # True when teammate has grabbed the flag — return to base
+mission_done         = False  # True after arriving at base in escort or flag-carry mode
 
 # Teammate state (updated via HEARTBEAT)
 teammate_pos      = (0.0, 0.0)
@@ -306,7 +312,7 @@ def broadcast_guard_seen_if_due(gx, gy):
 
 
 def check_teammate_comms():
-    global last_heartbeat_time, solo_mode, teammate_pos, teammate_has_flag, yield_counter
+    global last_heartbeat_time, solo_mode, teammate_pos, teammate_has_flag, yield_counter, escort_mode
 
     while receiver.getQueueLength() > 0:
         raw = receiver.getString()
@@ -325,12 +331,17 @@ def check_teammate_comms():
             last_heartbeat_time = sim_time
             teammate_pos      = tuple(msg.get('pos', [0.0, 0.0]))
             teammate_has_flag = msg.get('has_flag', False)
-            # Yield if close and we have the lower ID
             if not solo_mode:
                 d = math.sqrt((pose_x - teammate_pos[0])**2 + (pose_y - teammate_pos[1])**2)
                 tm_id = msg.get('id', 1 - robot_id)
                 if d < YIELD_DISTANCE and robot_id < tm_id:
                     yield_counter = YIELD_STEPS
+
+        elif t == 'FLAG_CAPTURED':
+            if not has_flag:
+                escort_mode = True
+                print(f'[{robot_name}] teammate has flag — returning to base')
+                log_csv('ESCORT_MODE', f'triggered by raider {msg.get("id")}')
 
         elif t == 'GUARD_SEEN':
             pos = msg.get('pos', [0.0, 0.0])
@@ -421,15 +432,16 @@ def run_evade_guard():
 
 # ── BT State: RETURN_TO_BASE ──────────────────────────────────
 def run_return_to_base():
-    global has_flag, seek_phase
-    # Apply sighting penalty: if HOME_BASE is somehow near a sighting, just go straight
-    # (Home is always safe — this state just drives back)
-    if distance_to(*HOME_BASE) < WAYPOINT_TOLERANCE:
-        print(f'[{robot_name}] flag delivered!')
-        log_csv('FLAG_DELIVERED', f'pos=({pose_x:.2f},{pose_y:.2f})')
-        has_flag   = False
-        seek_phase = 'approach'
-        reset_pose_to(SPAWN_X, SPAWN_Y, pose_theta)
+    global has_flag, seek_phase, mission_done
+    if distance_to(*HOME_BASE) < BASE_ARRIVAL_RADIUS:
+        if has_flag:
+            print(f'[{robot_name}] flag delivered — mission complete!')
+            log_csv('FLAG_DELIVERED', f'pos=({pose_x:.2f},{pose_y:.2f})')
+        else:
+            print(f'[{robot_name}] escort arrived at base — mission complete!')
+            log_csv('ESCORT_ARRIVED', f'pos=({pose_x:.2f},{pose_y:.2f})')
+        set_wheel_speeds(0, 0)
+        mission_done = True
     else:
         steer_toward(*HOME_BASE)
 
@@ -457,15 +469,18 @@ def run_seek_flag():
 # ── Flag Capture ──────────────────────────────────────────────
 def check_flag_capture():
     global has_flag
-    if not has_flag and detect_flag_in_camera():
+    if not has_flag and distance_to(*FLAG_POS) < FLAG_CAPTURE_RADIUS and detect_flag_in_camera():
         has_flag = True
         print(f'[{robot_name}] captured the flag!')
         log_csv('FLAG_CAPTURED', f'pos=({pose_x:.2f},{pose_y:.2f})')
+        msg = {'type': 'FLAG_CAPTURED', 'id': robot_id, 't': round(sim_time, 2)}
+        emitter.send(json.dumps(msg).encode('utf-8'))
+        log_csv('BROADCAST', 'FLAG_CAPTURED')
 
 
 # ── BT Priority Selector ──────────────────────────────────────
 def select_state(readings):
-    global avoidance_timer
+    global avoidance_timer, evade_guard_steps
 
     if obstacle_detected(readings):
         avoidance_timer += dt
@@ -478,9 +493,12 @@ def select_state(readings):
 
     guard_count, _ = detect_guard_in_camera()
     if guard_count >= GUARD_PIXEL_THRESHOLD:
+        evade_guard_steps = EVADE_GUARD_MIN_STEPS
+    if evade_guard_steps > 0:
+        evade_guard_steps -= 1
         return State.EVADE_GUARD
 
-    if has_flag:
+    if has_flag or escort_mode:
         return State.RETURN_TO_BASE
 
     return State.SEEK_FLAG
@@ -548,6 +566,10 @@ run_auction()
 # ── Main Control Loop ─────────────────────────────────────────
 while robot.step(timestep) != -1:
     sim_time += dt
+
+    if mission_done:
+        set_wheel_speeds(0, 0)
+        continue
 
     update_odometry()
 
