@@ -17,16 +17,41 @@ TexturedBackground {
 TexturedBackgroundLight {
 }
 
-# Small isolated arena for testing the defender north-south bounce
+# Small isolated arena for testing defender patrol + obstacle avoidance
 RectangleArena {
   floorSize 0.4 0.8
   wallHeight 0.05
 }
 
-# Test defender — centre of arena, facing north (+y = rotation 90° around z)
+# Orange obstacle on the patrol path — forces sideways avoidance to test RETURN_TO_PATROL
+Solid {
+  translation 0 0.2 0.04
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 1 0.5 0
+        }
+      }
+      geometry Box {
+        size 0.12 0.06 0.08
+      }
+    }
+  ]
+  name "obstacle"
+  boundingObject Box {
+    size 0.12 0.06 0.08
+  }
+}
+
+# Defender — centre of arena, facing north, compass enabled
 E-puck {
-  name "test_defender"
+  name "team_a_defender"
   translation 0 0 0
   rotation 0 0 1 1.5708
-  controller "defender_test_controller"
+  controller "defender_controller"
+  turretSlot [
+    Compass {
+    }
+  ]
 }
