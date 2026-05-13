@@ -6,139 +6,119 @@ EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/project
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/robots/gctronic/e-puck/protos/E-puck.proto"
 
 WorldInfo {
-  title "PROWL-R CTF"
+  title "PROWL-R Infiltration"
 }
 Viewpoint {
   orientation -0.5588167212284731 0.5830858941529885 0.5896903527405454 2.0384099858815126
-  position 0 0 3.5
+  position 0 0 4.5
 }
 TexturedBackground {
 }
 TexturedBackgroundLight {
 }
 
-# Arena: 2 m wide x 1 m tall — left half is Team A (blue), right half is Team B (red)
 RectangleArena {
-  floorSize 2 1
+  floorSize 2.0 0.8
   wallHeight 0.05
 }
 
-# Centre line — visual boundary between the two team zones
+# Red flag — Raiders' objective (east end, centre)
 Solid {
-  name "centre_line"
-  translation 0 0 0.001
-  children [
-    Shape {
-      appearance Appearance {
-        material Material { diffuseColor 0.8 0.8 0.8 }
-      }
-      geometry Box { size 0.01 1.0 0.001 }
-    }
-  ]
-}
-
-# Yellow flag — Team A base (far left); detected by red attacker camera
-Solid {
-  name "yellow_flag"
-  translation -0.85 0 0.05
+  translation 0.85 0 0.03
   children [
     Shape {
       appearance Appearance {
         material Material {
-          diffuseColor 1 1 0
-          emissiveColor 0.4 0.4 0
+          diffuseColor 0.9 0 0
         }
       }
-      geometry Box { size 0.04 0.04 0.1 }
-    }
-  ]
-}
-
-# Green flag — Team B base (far right); detected by blue attacker camera
-Solid {
-  name "green_flag"
-  translation 0.85 0 0.05
-  children [
-    Shape {
-      appearance Appearance {
-        material Material {
-          diffuseColor 0 1 0
-          emissiveColor 0 0.4 0
-        }
+      geometry Box {
+        size 0.05 0.05 0.06
       }
-      geometry Box { size 0.04 0.04 0.1 }
     }
   ]
+  name "red_flag"
 }
 
-# Obstacle boxes — grey blocks placed across the arena to test avoidance
-Solid {
-  name "obstacle_1"
-  translation 0.2 0.2 0.05
-  children [
-    Shape {
-      appearance Appearance { material Material { diffuseColor 0.4 0.4 0.4 } }
-      geometry Box { size 0.1 0.1 0.1 }
-    }
-  ]
-  boundingObject Box { size 0.1 0.1 0.1 }
-}
-Solid {
-  name "obstacle_2"
-  translation 0.2 -0.2 0.05
-  children [
-    Shape {
-      appearance Appearance { material Material { diffuseColor 0.4 0.4 0.4 } }
-      geometry Box { size 0.1 0.1 0.1 }
-    }
-  ]
-  boundingObject Box { size 0.1 0.1 0.1 }
-}
-Solid {
-  name "obstacle_3"
-  translation -0.34 0.26 0.05
-  children [
-    Shape {
-      appearance Appearance { material Material { diffuseColor 0.4 0.4 0.4 } }
-      geometry Box { size 0.1 0.1 0.1 }
-    }
-  ]
-  boundingObject Box { size 0.1 0.1 0.1 }
-}
-Solid {
-  name "obstacle_4"
-  translation -0.35 -0.25 0.05
-  children [
-    Shape {
-      appearance Appearance { material Material { diffuseColor 0.4 0.4 0.4 } }
-      geometry Box { size 0.1 0.1 0.1 }
-    }
-  ]
-  boundingObject Box { size 0.1 0.1 0.1 }
-}
-Solid {
-  name "obstacle_5"
-  translation 0 0 0.05
-  children [
-    Shape {
-      appearance Appearance { material Material { diffuseColor 0.4 0.4 0.4 } }
-      geometry Box { size 0.1 0.1 0.1 }
-    }
-  ]
-  boundingObject Box { size 0.1 0.1 0.1 }
-}
-
-# Team A attacker — spawns on the left half, seeks the green flag (right base)
+# Raider A — west spawn, upper lane, blue marker, supervisor enabled
 E-puck {
-  name "team_a_attacker"
-  translation -0.5 0 0
-  controller "attacker_controller"
+  name "raider_a"
+  translation -0.7 0.2 0
+  rotation 0 0 1 0
+  controller "raider_controller"
+  supervisor TRUE
+  turretSlot [
+    Compass {
+    }
+    Solid {
+      translation 0 0 0.025
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 0 0.3 1
+            }
+          }
+          geometry Box {
+            size 0.025 0.025 0.02
+          }
+        }
+      ]
+    }
+  ]
 }
 
-# Team B attacker — spawns on the right half, seeks the yellow flag (left base)
+# Raider B — west spawn, lower lane, blue marker, supervisor enabled
 E-puck {
-  name "team_b_attacker"
-  translation 0.5 0 0
-  rotation 0 0 1 3.14159
-  controller "attacker_controller"
+  name "raider_b"
+  translation -0.7 -0.2 0
+  rotation 0 0 1 0
+  controller "raider_controller"
+  supervisor TRUE
+  turretSlot [
+    Compass {
+    }
+    Solid {
+      translation 0 0 0.025
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 0 0.3 1
+            }
+          }
+          geometry Box {
+            size 0.025 0.025 0.02
+          }
+        }
+      ]
+    }
+  ]
+}
+
+# Guard 1 — east zone patrol, yellow marker, no comms
+E-puck {
+  name "guard_1"
+  translation 0.3 0.2 0
+  rotation 0 0 1 1.5708
+  controller "guard_controller"
+  turretSlot [
+    Compass {
+    }
+    Solid {
+      translation 0 0 0.025
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 1 0.9 0
+            }
+          }
+          geometry Box {
+            size 0.025 0.025 0.02
+          }
+        }
+      ]
+    }
+  ]
 }
