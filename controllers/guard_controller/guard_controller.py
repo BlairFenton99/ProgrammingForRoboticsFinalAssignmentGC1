@@ -13,6 +13,8 @@ import math
 # ── Constants ─────────────────────────────────────────────────
 MAX_SPEED          = 6.28
 OBSTACLE_THRESHOLD = 80
+AVOID_MIN_STEPS    = 10
+CHASE_MIN_STEPS    = 20
 WHEEL_RADIUS       = 0.0205
 CHASE_TIMEOUT      = 5.0   # seconds before giving up on a chase
 RAIDER_PIXEL_THRESHOLD = 15  # blue pixels to trigger CHASE
@@ -56,9 +58,13 @@ robot_name = robot.getName()
 
 # ── Agent State ───────────────────────────────────────────────
 current_state  = State.PATROL
+
 prev_state     = None
 patrol_heading = 1    # +1 = north, -1 = south
 chase_elapsed  = 0.0
+
+avoid_steps    = 0
+chase_steps    = 0
 
 prev_left_enc  = 0.0
 prev_right_enc = 0.0
@@ -162,20 +168,33 @@ def run_chase(offset):
 
 # ── Priority Selector ─────────────────────────────────────────
 def select_state(readings, raider_count, raider_offset):
-    global current_state, chase_elapsed
+    global current_state, chase_elapsed, avoid_steps, chase_steps
 
+        # ── Obstacle Avoidance Hysteresis ─────────────────────
     if obstacle_detected(readings):
+
+        # only trigger once
+        if avoid_steps == 0:
+            avoid_steps = AVOID_MIN_STEPS
+
+    if avoid_steps > 0:
+        avoid_steps -= 1
         return State.AVOID_OBSTACLE
 
-    if current_state == State.CHASE:
-        chase_elapsed += dt
-        if raider_count < RAIDER_PIXEL_THRESHOLD or chase_elapsed > CHASE_TIMEOUT:
-            chase_elapsed = 0.0
-            return State.PATROL
-        return State.CHASE
-
+    # ── Chase Hysteresis ──────────────────────────────────
     if raider_count >= RAIDER_PIXEL_THRESHOLD:
+        chase_steps = CHASE_MIN_STEPS
         chase_elapsed = 0.0
+
+    if chase_steps > 0:
+        chase_steps -= 1
+        chase_elapsed += dt
+
+        if chase_elapsed > CHASE_TIMEOUT:
+            chase_elapsed = 0.0
+            chase_steps = 0
+            return State.PATROL
+
         return State.CHASE
 
     return State.PATROL
