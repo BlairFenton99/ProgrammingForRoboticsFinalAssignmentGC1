@@ -28,6 +28,7 @@ FLAG_CAPTURE_RADIUS     = 0.30  # must be within this distance of FLAG_POS to ca
 BASE_ARRIVAL_RADIUS     = 0.20  # larger than WAYPOINT_TOLERANCE to absorb odometry drift on return
 GUARD_PIXEL_THRESHOLD   = 20    # yellow pixels to trigger EVADE_GUARD
 EVADE_GUARD_MIN_STEPS   = 15    # minimum timesteps to stay in EVADE_GUARD (anti-oscillation)
+AVOID_MIN_STEPS         = 12
 TAG_PIXEL_THRESHOLD     = 200   # yellow pixels to trigger respawn (~10% of 52×39 frame)
 GUARD_SEEN_RATE         = 0.5   # min seconds between GUARD_SEEN broadcasts
 HEARTBEAT_RATE          = 0.5   # seconds between HEARTBEAT broadcasts
@@ -134,6 +135,7 @@ last_hb_broadcast    = 0.0
 last_guard_broadcast = 0.0
 yield_counter        = 0
 evade_guard_steps    = 0   # counts down after EVADE_GUARD triggers; holds state until 0
+avoid_steps          = 0
 escort_mode          = False  # True when teammate has grabbed the flag — return to base
 mission_done         = False  # True after arriving at base in escort or flag-carry mode
 
@@ -480,11 +482,20 @@ def check_flag_capture():
 
 # ── BT Priority Selector ──────────────────────────────────────
 def select_state(readings):
-    global avoidance_timer, evade_guard_steps
+    global avoidance_timer, evade_guard_steps, avoid_steps
 
     if obstacle_detected(readings):
+
         avoidance_timer += dt
+
+        # only trigger once
+        if avoid_steps == 0:
+            avoid_steps = AVOID_MIN_STEPS
+
+    if avoid_steps > 0:
+        avoid_steps -= 1
         return State.AVOID_OBSTACLE
+
     elif escape_counter == 0:
         avoidance_timer = 0.0
 
