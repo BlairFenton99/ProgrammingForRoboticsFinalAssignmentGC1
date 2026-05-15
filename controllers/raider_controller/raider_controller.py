@@ -573,6 +573,18 @@ print(f'[INIT] {robot_name}  id={robot_id}  spawn=({SPAWN_X},{SPAWN_Y})  '
 
 run_auction()
 
+# ── On-Screen Behaviour Labels ─────────────────────────
+def update_label():
+
+    robot.setLabel(robot_id,
+        f'{robot_name}: {current_state.name}',
+        0.02,                                  
+        0.02 + robot_id * 0.05,                
+        0.07,                                  
+        0xFFFFFF,                              
+        0.0,                                   
+        'Arial'                                
+    )
 
 # ── Main Control Loop ─────────────────────────────────────────
 while robot.step(timestep) != -1:
@@ -602,6 +614,8 @@ while robot.step(timestep) != -1:
         continue
 
     current_state = select_state(proximity_readings)
+
+    update_label()
 
     if current_state != prev_state:
         print(f'[STATE] {robot_name}: '
