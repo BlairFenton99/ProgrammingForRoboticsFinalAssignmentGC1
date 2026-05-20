@@ -156,7 +156,7 @@ E-puck {
 }
 
 # Guard 1 — east zone patrol, yellow marker, no comms
-E-puck {
+DEF GUARD_1 E-puck {
   name "guard_1"
   translation 0.3 0.2 0
   rotation 0 0 1 1.5708
