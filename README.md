@@ -68,13 +68,17 @@ Priority-ordered — highest condition that is true wins each timestep.
 
 | Priority | State | Condition |
 |---|---|---|
-| 1 | `AVOID_OBSTACLE` | Side proximity sensors > 80 |
+| 1 | `AVOID_OBSTACLE` | Side proximity sensors > 80 (latches for 30 ticks) |
 | 2 | `RECOVERY` | Stuck > 3 s or avoidance loop > 3 s |
-| 3 | `EVADE_GUARD` | Yellow pixels ≥ 20 in camera |
+| 3 | `EVADE_GUARD` | Yellow pixels ≥ 20 in camera **or** teammate warns guard is within 0.28 m |
 | 4 | `RETURN_TO_BASE` | Carrying flag **or** escort mode active |
 | 5 | `SEEK_FLAG` | Default — navigate approach waypoint → flag |
 
 When a Raider reaches its home base pad it stops. Once both Raiders are home the run ends.
+
+**SEEK_FLAG rerouting** — on every tick in the approach phase, if a guard sighting (from own camera or teammate, within 2.5 s) is within 0.40 m of the assigned lane waypoint and the alternate lane is clear, the Raider steers toward the alternate waypoint instead. The on-screen route label turns orange and shows `[guard detour!]` when this fires.
+
+**RETURN_TO_BASE path** — both the flag carrier and the escort route via a lane-side waypoint (north: `y=+0.32`, south: `y=-0.26`) before heading home when east of x=0.60, avoiding the flag wall at x=0.73.
 
 ---
 
@@ -96,7 +100,7 @@ All messages are JSON strings on Emitter/Receiver channel 1. Each Raider ignores
 |---|---|---|
 | `BID` | Once at t=0 | 2×2 Hungarian auction assigns each Raider a different approach lane (north or south of the flag wall) |
 | `HEARTBEAT` | 2 Hz | Keeps SOLO-mode watchdog alive; triggers 1 s yield halt when Raiders are within 0.2 m |
-| `GUARD_SEEN` | 2 Hz while evading | Teammate reroutes away from any approach waypoint within 0.3 m of the sighting |
+| `GUARD_SEEN` | 2 Hz while evading | Predicted guard position broadcast to teammate; triggers immediate evade if within 0.28 m, and flags the nearby approach lane for rerouting (radius 0.40 m, TTL 2.5 s) |
 | `FLAG_CAPTURED` | Once on grab | Teammate enters escort mode and returns to base; both stop on arrival |
 
 **Failure handling** — no `BID` reply → take nearest lane; no heartbeat for 5 s → SOLO mode (coordination off, full BT still runs).
@@ -108,7 +112,11 @@ All messages are JSON strings on Emitter/Receiver channel 1. Each Raider ignores
 - **Odometry** — encoder integration + compass heading; pose initialised to world spawn coordinates
 - **Respawn** — tagged by Guard (>200 yellow pixels in camera) → `Supervisor` teleports Raider to spawn, flag dropped
 - **Flag capture** — camera red-pixel detection gated by proximity to flag position (< 0.30 m) to prevent false positives
-- **CSV logging** — each Raider writes `raider_<id>_mission.csv` (events: BID, AUCTION_RESULT, FLAG_CAPTURED, GUARD_SEEN, RESPAWN, STATE)
+- **Guard position estimation** — bearing-based projection onto the guard's known patrol corridor (`x=0.30`): `gy = pose_y + (GUARD_PATROL_X − pose_x) × tan(bearing)`. Gives exact x and accurate y without relying on pixel count.
+- **Guard velocity tracking** — direction changes require > 0.06 m displacement to update (hysteresis prevents single-observation flips); stationary detection after 1 s of no movement
+- **Sighting tagging** — sightings are tagged `from_tm=True/False`. Proximity evade only fires on teammate sightings; waypoint rerouting uses both. This prevents a robot re-evading its own observations.
+- **CSV logging** — each Raider writes `raider_<id>_mission.csv` (events: BID, AUCTION_RESULT, STATE, GUARD_SEEN, FLAG_CAPTURED, ESCORT_MODE, RESPAWN)
+- **On-screen HUD** — per-robot labels show current state (white), comms summary (green), and active route with detour indicator (grey/orange)
 
 ---
 
