@@ -28,12 +28,20 @@ FLAG_CAPTURE_RADIUS     = 0.30  # must be within this distance of FLAG_POS to ca
 BASE_ARRIVAL_RADIUS     = 0.20  # larger than WAYPOINT_TOLERANCE to absorb odometry drift on return
 GUARD_PIXEL_THRESHOLD   = 20    # yellow pixels to trigger EVADE_GUARD
 EVADE_GUARD_MIN_STEPS   = 15    # minimum timesteps to stay in EVADE_GUARD (anti-oscillation)
-AVOID_MIN_STEPS         = 12
+AVOID_MIN_STEPS         = 30
 TAG_PIXEL_THRESHOLD     = 200   # yellow pixels to trigger respawn (~10% of 52×39 frame)
 GUARD_SEEN_RATE         = 0.5   # min seconds between GUARD_SEEN broadcasts
 HEARTBEAT_RATE          = 0.5   # seconds between HEARTBEAT broadcasts
-GUARD_SIGHTING_TTL      = 5.0   # seconds before a sighting expires
+GUARD_SIGHTING_TTL      = 10.0  # seconds before a sighting expires
 GUARD_SIGHTING_RADIUS   = 0.3   # metres — waypoint cost-penalty radius
+CAMERA_HALF_FOV         = 0.42  # radians — half of e-puck camera FOV (~48 deg total)
+GUARD_ASSUMED_DIST      = 0.35  # metres — fallback distance when pixel count unavailable
+GUARD_REF_PIXELS        = 20    # expected yellow pixel count at GUARD_ASSUMED_DIST
+GUARD_PREDICT_AHEAD     = 2.0   # seconds to project guard position forward
+GUARD_PATROL_SPEED      = 6.28 * 0.0205   # guard linear speed from guard_controller constants
+PREEMPTIVE_EVADE_RADIUS = 0.35  # metres — if predicted guard within this distance, evade before seeing it
+PROXIMITY_EVADE_TTL     = 3.0   # seconds — sightings older than this skip the per-tick proximity check
+DIRECTION_CHANGE_MIN_DY = 0.02  # 4× noise floor — prevents single-observation direction flips once velocity is set
 YIELD_DISTANCE          = 0.2   # metres — close-approach threshold
 YIELD_STEPS             = 50    # timesteps lower-ID raider halts (~1 s at 32 ms step)
 BID_TIMEOUT             = 1.0   # seconds to wait for teammate BID at round start
@@ -89,6 +97,14 @@ receiver = robot.getDevice('receiver')
 receiver.enable(timestep)
 
 camera_pixels = camera.getWidth() * camera.getHeight()  # computed at runtime
+guard_node    = robot.getFromDef('GUARD_1')             # supervisor access for debug
+
+
+def get_guard_actual_pos():
+    if guard_node is None:
+        return None, None
+    t = guard_node.getField('translation').getSFVec3f()
+    return round(t[0], 3), round(t[1], 3)
 
 # ── Identity & Spawn ──────────────────────────────────────────
 robot_name = robot.getName()
@@ -123,8 +139,9 @@ prev_right_enc = 0.0
 last_check_x    = pose_x
 last_check_y    = pose_y
 stuck_timer     = 0.0
-avoidance_timer = 0.0
-escape_counter  = 0
+avoidance_timer  = 0.0
+avoidance_clear  = 0   # consecutive obstacle-free steps before avoidance_timer resets
+escape_counter   = 0
 escape_turn_left = True
 recovery_phase   = 'reverse'
 recovery_counter = 0
@@ -133,11 +150,13 @@ sim_time             = 0.0
 last_heartbeat_time  = 0.0
 last_hb_broadcast    = 0.0
 last_guard_broadcast = 0.0
+last_guard_pos_print = 0.0
 yield_counter        = 0
 evade_guard_steps    = 0   # counts down after EVADE_GUARD triggers; holds state until 0
 avoid_steps          = 0
 escort_mode          = False  # True when teammate has grabbed the flag — return to base
 mission_done         = False  # True after arriving at base in escort or flag-carry mode
+
 last_sent            = '-'    # last meaningful message sent (not HB)
 last_recv            = '-'    # last meaningful message received (not HB)
 tm_info              = '-'    # teammate position + flag status from latest HB
@@ -148,6 +167,11 @@ teammate_has_flag = False
 
 # Guard sightings: list of {"pos": (x,y), "t": float}
 guard_sightings = []
+
+guard_prev_est  = None        # (x, y, t) of last valid guard estimate
+guard_velocity  = (0.0, 0.0) # (vx, vy) derived only from px >= threshold estimates
+
+# Guard position estimation and velocity tracking
 
 # ── CSV Logging ───────────────────────────────────────────────
 _log_path = f'raider_{robot_id}_mission.csv'
@@ -293,6 +317,51 @@ def add_guard_sighting(x, y):
     guard_sightings.append({'pos': (x, y), 't': sim_time})
 
 
+def estimate_guard_world_pos(offset, count):
+    """Convert camera pixel offset + count to world coords.
+    offset > 0 = guard on right side of image = robot's right = subtract from heading.
+    Distance derived from pixel count: more pixels = closer (area ∝ 1/d²).
+    """
+    bearing = get_heading() - offset * CAMERA_HALF_FOV
+    dist = GUARD_ASSUMED_DIST * math.sqrt(GUARD_REF_PIXELS / max(1, count))
+    dist = max(0.1, min(0.8, dist))
+    gx = max(-1.0, min(1.0, pose_x + dist * math.cos(bearing)))
+    gy = max(-0.4, min(0.4, pose_y + dist * math.sin(bearing)))
+    return gx, gy
+
+
+def update_guard_velocity(gx, gy):
+    """Derive patrol direction from sign of y-change; use known speed as magnitude.
+    Keeps the first observation as reference until dy crosses the noise floor,
+    so consecutive 32ms estimates accumulate rather than always comparing against
+    the previous step.
+    """
+    global guard_prev_est, guard_velocity, last_guard_broadcast
+    if guard_prev_est is None:
+        guard_prev_est = (gx, gy, sim_time)
+        return
+    _, py, pt = guard_prev_est
+    elapsed = sim_time - pt
+    dy = gy - py
+    _, cur_vy = guard_velocity
+    # Require larger dy to *change* an already-set direction (prevents noise flips)
+    threshold = DIRECTION_CHANGE_MIN_DY if cur_vy != 0.0 else 0.005
+    if abs(dy) > threshold:
+        guard_velocity = (0.0, math.copysign(GUARD_PATROL_SPEED, dy))
+        guard_prev_est = (gx, gy, sim_time)
+        last_guard_broadcast = 0.0  # force immediate re-broadcast with corrected prediction
+    elif elapsed > 2.0:
+        guard_prev_est = (gx, gy, sim_time)  # stale — reset without updating velocity
+
+
+def predict_guard_pos(gx, gy):
+    vx, vy = guard_velocity
+    return (max(-1.0, min(1.0, gx + vx * GUARD_PREDICT_AHEAD)),
+            max(-0.4, min(0.4, gy + vy * GUARD_PREDICT_AHEAD)))
+
+
+
+
 # ── Communication ─────────────────────────────────────────────
 def broadcast_heartbeat_if_due():
     global last_hb_broadcast
@@ -318,7 +387,7 @@ def broadcast_guard_seen_if_due(gx, gy):
 
 
 def check_teammate_comms():
-    global last_heartbeat_time, solo_mode, teammate_pos, teammate_has_flag, yield_counter, escort_mode, last_recv, tm_info
+    global last_heartbeat_time, solo_mode, teammate_pos, teammate_has_flag, yield_counter, escort_mode, last_recv, tm_info, evade_guard_steps
 
     while receiver.getQueueLength() > 0:
         raw = receiver.getString()
@@ -356,8 +425,16 @@ def check_teammate_comms():
             pos = msg.get('pos', [0.0, 0.0])
             last_recv = f'guard@({pos[0]:.2f},{pos[1]:.2f})'
             t_seen = msg.get('t', sim_time)
+            ax, ay = get_guard_actual_pos()
+            if ax is not None:
+                print(f'[{robot_name}] rx GUARD_SEEN broadcast=({pos[0]:.2f},{pos[1]:.2f}) '
+                      f'actual=({ax:.2f},{ay:.2f})')
             if sim_time - t_seen < GUARD_SIGHTING_TTL:
                 add_guard_sighting(pos[0], pos[1])
+                dist_to_predicted = math.sqrt((pose_x - pos[0])**2 + (pose_y - pos[1])**2)
+                if dist_to_predicted < PREEMPTIVE_EVADE_RADIUS:
+                    evade_guard_steps = max(evade_guard_steps, EVADE_GUARD_MIN_STEPS)
+                    print(f'[{robot_name}] preemptive evade — guard predicted {dist_to_predicted:.2f}m away')
 
     solo_mode = (sim_time - last_heartbeat_time > COMM_TIMEOUT)
 
@@ -432,12 +509,21 @@ def run_recovery():
 
 # ── BT State: EVADE_GUARD ─────────────────────────────────────
 def run_evade_guard():
-    _, offset = detect_guard_in_camera()
+    count, offset = detect_guard_in_camera()
     if offset < 0:  # guard left → turn right
         set_wheel_speeds(MAX_SPEED, MAX_SPEED * 0.2)
     else:           # guard right → turn left
         set_wheel_speeds(MAX_SPEED * 0.2, MAX_SPEED)
-    broadcast_guard_seen_if_due(pose_x, pose_y)
+    if count >= GUARD_PIXEL_THRESHOLD:
+        gx, gy = estimate_guard_world_pos(offset, count)
+        update_guard_velocity(gx, gy)
+        pgx, pgy = predict_guard_pos(gx, gy)
+        ax, ay = get_guard_actual_pos()
+        if ax is not None:
+            print(f'[{robot_name}] guard est=({gx:.2f},{gy:.2f}) '
+                  f'pred=({pgx:.2f},{pgy:.2f}) actual=({ax:.2f},{ay:.2f}) '
+                  f'err=({gx-ax:.2f},{gy-ay:.2f}) px={count}')
+        broadcast_guard_seen_if_due(pgx, pgy)
 
 
 # ── BT State: RETURN_TO_BASE ──────────────────────────────────
@@ -473,13 +559,16 @@ def run_seek_flag():
             steer_toward(*wp)
 
     else:  # 'flag'
-        steer_toward(*FLAG_POS)
+        if waypoint_near_sighting(*FLAG_POS):
+            seek_phase = 'approach'  # guard near flag — back off and reroute via waypoints
+        else:
+            steer_toward(*FLAG_POS)
 
 
 # ── Flag Capture ──────────────────────────────────────────────
 def check_flag_capture():
     global has_flag, last_sent
-    if not has_flag and distance_to(*FLAG_POS) < FLAG_CAPTURE_RADIUS and detect_flag_in_camera():
+    if not has_flag and not escort_mode and distance_to(*FLAG_POS) < FLAG_CAPTURE_RADIUS and detect_flag_in_camera():
         has_flag = True
         print(f'[{robot_name}] captured the flag!')
         log_csv('FLAG_CAPTURED', f'pos=({pose_x:.2f},{pose_y:.2f})')
@@ -491,22 +580,21 @@ def check_flag_capture():
 
 # ── BT Priority Selector ──────────────────────────────────────
 def select_state(readings):
-    global avoidance_timer, evade_guard_steps, avoid_steps
+    global avoidance_timer, avoidance_clear, evade_guard_steps, avoid_steps
 
     if obstacle_detected(readings):
-
         avoidance_timer += dt
-
-        # only trigger once
+        avoidance_clear  = 0
         if avoid_steps == 0:
             avoid_steps = AVOID_MIN_STEPS
+    else:
+        avoidance_clear += 1
+        if avoidance_clear >= 10:   # ~0.3 s clear before resetting the accumulator
+            avoidance_timer = 0.0
 
     if avoid_steps > 0:
         avoid_steps -= 1
         return State.AVOID_OBSTACLE
-
-    elif escape_counter == 0:
-        avoidance_timer = 0.0
 
     if check_if_stuck() or avoidance_timer >= AVOIDANCE_LIMIT:
         return State.RECOVERY
@@ -619,7 +707,24 @@ while robot.step(timestep) != -1:
 
     broadcast_heartbeat_if_due()
     check_teammate_comms()
+
+    if robot_id == 0 and sim_time - last_guard_pos_print >= 0.5:
+        gx, gy = get_guard_actual_pos()
+        if gx is not None:
+            print(f'[guard] x={gx:.3f} y={gy:.3f}  t={sim_time:.1f}s')
+        last_guard_pos_print = sim_time
     prune_guard_sightings()
+
+    # continuous sighting check — preemptive evade as raider walks into a known danger zone
+    if evade_guard_steps == 0 and not has_flag and not escort_mode:
+        for s in guard_sightings:
+            if sim_time - s['t'] > PROXIMITY_EVADE_TTL:
+                continue  # sighting too old to trust for proximity evade
+            d = distance_to(*s['pos'])
+            if d < PREEMPTIVE_EVADE_RADIUS:
+                evade_guard_steps = EVADE_GUARD_MIN_STEPS
+                print(f'[{robot_name}] proximity evade — sighting {d:.2f}m away at ({s["pos"][0]:.2f},{s["pos"][1]:.2f})')
+                break
 
     proximity_readings = read_proximity()
     check_flag_capture()
