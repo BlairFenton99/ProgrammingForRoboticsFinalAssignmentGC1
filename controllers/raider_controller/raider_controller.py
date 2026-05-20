@@ -33,13 +33,14 @@ TAG_PIXEL_THRESHOLD     = 200   # yellow pixels to trigger respawn (~10% of 52×
 GUARD_SEEN_RATE         = 0.5   # min seconds between GUARD_SEEN broadcasts
 HEARTBEAT_RATE          = 0.5   # seconds between HEARTBEAT broadcasts
 GUARD_SIGHTING_TTL      = 10.0  # seconds before a sighting expires
-GUARD_SIGHTING_RADIUS   = 0.3   # metres — waypoint cost-penalty radius
+GUARD_SIGHTING_RADIUS   = 0.40  # metres — waypoint cost-penalty radius
+WAYPOINT_SIGHTING_TTL   = 2.5   # seconds — only recent sightings count for approach rerouting
 CAMERA_HALF_FOV         = 0.42  # radians — half of e-puck camera FOV (~48 deg total)
 GUARD_ASSUMED_DIST      = 0.25  # metres — fallback distance when pixel count unavailable
 GUARD_REF_PIXELS        = 20    # expected yellow pixel count at GUARD_ASSUMED_DIST
 GUARD_PREDICT_AHEAD     = 1.5   # seconds to project guard position forward
 GUARD_PATROL_SPEED      = 6.28 * 0.0205   # guard linear speed from guard_controller constants
-PREEMPTIVE_EVADE_RADIUS = 0.22  # metres — if predicted guard within this distance, evade before seeing it
+PREEMPTIVE_EVADE_RADIUS = 0.28  # metres — if predicted guard within this distance, evade before seeing it
 PROXIMITY_EVADE_TTL     = 3.0   # seconds — sightings older than this skip the per-tick proximity check
 DIRECTION_CHANGE_MIN_DY = 0.06  # above estimation noise envelope — prevents single-observation direction flips
 YIELD_DISTANCE          = 0.2   # metres — close-approach threshold
@@ -51,7 +52,8 @@ NORTH_APPROACH  = (0.6,  0.25)
 SOUTH_APPROACH  = (0.6, -0.25)
 FLAG_POS        = (0.85, 0.0)
 NORTH_RETURN_WP = (0.75,  0.32)   # north of flag wall (wall tops out at y=0.14) — go north first, then home
-SOUTH_RETURN_WP = (0.75, -0.32)   # south of flag wall — go south first, then home
+SOUTH_RETURN_WP = (0.75, -0.26)   # south of flag wall — go south first, then home
+GUARD_PATROL_X  = 0.30            # guard patrols north-south at this x — used for bearing-based y estimation
 
 PS_ANGLE = [
     math.radians(-10),  math.radians(-45),  math.radians(-90),  math.radians(-150),
@@ -164,6 +166,7 @@ mission_done         = False  # True after arriving at base in escort or flag-ca
 last_sent            = '-'    # last meaningful message sent (not HB)
 last_recv            = '-'    # last meaningful message received (not HB)
 tm_info              = '-'    # teammate position + flag status from latest HB
+route_info           = ''     # current approach lane + detour flag, shown on screen
 
 # Teammate state (updated via HEARTBEAT)
 teammate_pos      = (0.0, 0.0)
@@ -182,7 +185,6 @@ _log_path = f'raider_{robot_id}_mission.csv'
 _log_file = open(_log_path, 'w', newline='')
 _log      = csv.writer(_log_file)
 _log.writerow(['sim_time', 'event', 'data'])
-
 
 def log_csv(event, data=''):
     _log.writerow([f'{sim_time:.2f}', event, str(data)])
@@ -314,24 +316,33 @@ def waypoint_near_sighting(wx, wy):
     return any(
         math.sqrt((wx - s['pos'][0])**2 + (wy - s['pos'][1])**2) < GUARD_SIGHTING_RADIUS
         for s in guard_sightings
+        if sim_time - s['t'] < WAYPOINT_SIGHTING_TTL
     )
 
 
-def add_guard_sighting(x, y):
-    guard_sightings.append({'pos': (x, y), 't': sim_time})
+def add_guard_sighting(x, y, from_tm=False):
+    guard_sightings.append({'pos': (x, y), 't': sim_time, 'from_tm': from_tm})
 
 
 def estimate_guard_world_pos(offset, count):
-    """Convert camera pixel offset + count to world coords.
-    offset > 0 = guard on right side of image = robot's right = subtract from heading.
-    Distance derived from pixel count: more pixels = closer (area ∝ 1/d²).
+    """Estimate guard world position from camera bearing + known patrol x.
+    Pixel count is unreliable for distance (marker too small), so we use the
+    bearing angle projected onto the guard's known patrol corridor (GUARD_PATROL_X).
     """
     bearing = get_heading() - offset * CAMERA_HALF_FOV
-    dist = GUARD_ASSUMED_DIST * math.sqrt(GUARD_REF_PIXELS / max(1, count))
-    dist = max(0.1, min(0.8, dist))
-    gx = max(-1.0, min(1.0, pose_x + dist * math.cos(bearing)))
-    gy = max(-0.4, min(0.4, pose_y + dist * math.sin(bearing)))
-    return gx, gy
+    dx = GUARD_PATROL_X - pose_x
+    if dx > 0.05:
+        # robot is west of patrol corridor — use bearing to solve for gy directly
+        gy = pose_y + dx * math.tan(bearing)
+        gy = max(-0.4, min(0.4, gy))
+        return GUARD_PATROL_X, gy
+    else:
+        # robot is at or east of patrol corridor — fall back to pixel-count distance
+        dist = GUARD_ASSUMED_DIST * math.sqrt(GUARD_REF_PIXELS / max(1, count))
+        dist = max(0.1, min(0.5, dist))
+        gx = max(-1.0, min(1.0, pose_x + dist * math.cos(bearing)))
+        gy = max(-0.4, min(0.4, pose_y + dist * math.sin(bearing)))
+        return gx, gy
 
 
 def update_guard_velocity(gx, gy):
@@ -437,7 +448,7 @@ def check_teammate_comms():
             t_seen = msg.get('t', sim_time)
             sender_name = 'raider_a' if msg.get('id') == 0 else 'raider_b'
             if sim_time - t_seen < GUARD_SIGHTING_TTL:
-                add_guard_sighting(pos[0], pos[1])
+                add_guard_sighting(pos[0], pos[1], from_tm=True)
                 dist_to_predicted = math.sqrt((pose_x - pos[0])**2 + (pose_y - pos[1])**2)
                 if dist_to_predicted < PREEMPTIVE_EVADE_RADIUS:
                     evade_guard_steps = max(evade_guard_steps, EVADE_GUARD_MIN_STEPS)
@@ -528,6 +539,7 @@ def run_evade_guard():
         gx, gy = estimate_guard_world_pos(offset, count)
         update_guard_velocity(gx, gy)
         pgx, pgy = predict_guard_pos(gx, gy)
+        add_guard_sighting(pgx, pgy, from_tm=False)
         broadcast_guard_seen_if_due(pgx, pgy)
 
 
@@ -543,8 +555,8 @@ def run_return_to_base():
             log_csv('ESCORT_ARRIVED', f'pos=({pose_x:.2f},{pose_y:.2f})')
         set_wheel_speeds(0, 0)
         mission_done = True
-    elif has_flag and return_phase == 'waypoint':
-        # route via return waypoint (west of flag wall) to avoid guard patrol corridor
+    elif return_phase == 'waypoint' and pose_x > 0.60:
+        # both flag carrier and escort use the waypoint when east of flag wall
         if distance_to(*return_wp) < WAYPOINT_TOLERANCE:
             return_phase = 'home'
         else:
@@ -555,14 +567,16 @@ def run_return_to_base():
 
 # ── BT State: SEEK_FLAG ───────────────────────────────────────
 def run_seek_flag():
-    global seek_phase
+    global seek_phase, route_info
 
     if seek_phase == 'approach':
-        # Switch approach if it's near a guard sighting
         wp = approach_wp
         alt_wp = SOUTH_APPROACH if approach_wp == NORTH_APPROACH else NORTH_APPROACH
-        if waypoint_near_sighting(*wp) and not waypoint_near_sighting(*alt_wp):
+        rerouted = waypoint_near_sighting(*wp) and not waypoint_near_sighting(*alt_wp)
+        if rerouted:
             wp = alt_wp
+        lane = 'north' if wp == NORTH_APPROACH else 'south'
+        route_info = f'-> {lane} lane  [guard detour!]' if rerouted else f'-> {lane} lane'
 
         if distance_to(*wp) < WAYPOINT_TOLERANCE:
             seek_phase = 'flag'
@@ -703,6 +717,16 @@ def update_label():
         0.0,
         'Arial'
     )
+    detour = 'detour' in route_info
+    robot.setLabel(robot_id + 4,
+        f'  {route_info}',
+        0.02,
+        0.068 + robot_id * 0.06,
+        0.055,
+        0xFF8800 if detour else 0xAAAAAA,
+        0.0,
+        'Arial'
+    )
 
 # ── Main Control Loop ─────────────────────────────────────────
 while robot.step(timestep) != -1:
@@ -729,9 +753,11 @@ while robot.step(timestep) != -1:
 
     prune_guard_sightings()
 
-    # continuous sighting check — preemptive evade as raider walks into a known danger zone
+    # continuous sighting check — preemptive evade on teammate warnings only
     if evade_guard_steps == 0 and not has_flag and not escort_mode:
         for s in guard_sightings:
+            if not s.get('from_tm', False):
+                continue  # own sightings don't re-trigger proximity evade
             if sim_time - s['t'] > PROXIMITY_EVADE_TTL:
                 continue  # sighting too old to trust for proximity evade
             d = distance_to(*s['pos'])
