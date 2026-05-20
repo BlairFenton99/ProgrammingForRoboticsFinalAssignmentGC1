@@ -138,6 +138,9 @@ evade_guard_steps    = 0   # counts down after EVADE_GUARD triggers; holds state
 avoid_steps          = 0
 escort_mode          = False  # True when teammate has grabbed the flag — return to base
 mission_done         = False  # True after arriving at base in escort or flag-carry mode
+last_sent            = '-'    # last meaningful message sent (not HB)
+last_recv            = '-'    # last meaningful message received (not HB)
+tm_info              = '-'    # teammate position + flag status from latest HB
 
 # Teammate state (updated via HEARTBEAT)
 teammate_pos      = (0.0, 0.0)
@@ -303,18 +306,19 @@ def broadcast_heartbeat_if_due():
 
 
 def broadcast_guard_seen_if_due(gx, gy):
-    global last_guard_broadcast
+    global last_guard_broadcast, last_sent
     if sim_time - last_guard_broadcast < GUARD_SEEN_RATE:
         return
     msg = {'type': 'GUARD_SEEN', 'id': robot_id,
            'pos': [round(gx, 3), round(gy, 3)], 't': round(sim_time, 2)}
     emitter.send(json.dumps(msg).encode('utf-8'))
+    last_sent = f'guard@({gx:.2f},{gy:.2f})'
     last_guard_broadcast = sim_time
     log_csv('GUARD_SEEN', f'pos=({gx:.2f},{gy:.2f})')
 
 
 def check_teammate_comms():
-    global last_heartbeat_time, solo_mode, teammate_pos, teammate_has_flag, yield_counter, escort_mode
+    global last_heartbeat_time, solo_mode, teammate_pos, teammate_has_flag, yield_counter, escort_mode, last_recv, tm_info
 
     while receiver.getQueueLength() > 0:
         raw = receiver.getString()
@@ -333,6 +337,8 @@ def check_teammate_comms():
             last_heartbeat_time = sim_time
             teammate_pos      = tuple(msg.get('pos', [0.0, 0.0]))
             teammate_has_flag = msg.get('has_flag', False)
+            flag_marker = '[F]' if teammate_has_flag else ''
+            tm_info = f'tm@({teammate_pos[0]:.2f},{teammate_pos[1]:.2f}){flag_marker}'
             if not solo_mode:
                 d = math.sqrt((pose_x - teammate_pos[0])**2 + (pose_y - teammate_pos[1])**2)
                 tm_id = msg.get('id', 1 - robot_id)
@@ -340,6 +346,7 @@ def check_teammate_comms():
                     yield_counter = YIELD_STEPS
 
         elif t == 'FLAG_CAPTURED':
+            last_recv = 'tm has flag!'
             if not has_flag:
                 escort_mode = True
                 print(f'[{robot_name}] teammate has flag — returning to base')
@@ -347,6 +354,7 @@ def check_teammate_comms():
 
         elif t == 'GUARD_SEEN':
             pos = msg.get('pos', [0.0, 0.0])
+            last_recv = f'guard@({pos[0]:.2f},{pos[1]:.2f})'
             t_seen = msg.get('t', sim_time)
             if sim_time - t_seen < GUARD_SIGHTING_TTL:
                 add_guard_sighting(pos[0], pos[1])
@@ -470,13 +478,14 @@ def run_seek_flag():
 
 # ── Flag Capture ──────────────────────────────────────────────
 def check_flag_capture():
-    global has_flag
+    global has_flag, last_sent
     if not has_flag and distance_to(*FLAG_POS) < FLAG_CAPTURE_RADIUS and detect_flag_in_camera():
         has_flag = True
         print(f'[{robot_name}] captured the flag!')
         log_csv('FLAG_CAPTURED', f'pos=({pose_x:.2f},{pose_y:.2f})')
         msg = {'type': 'FLAG_CAPTURED', 'id': robot_id, 't': round(sim_time, 2)}
         emitter.send(json.dumps(msg).encode('utf-8'))
+        last_sent = 'FLAG CAPTURED!'
         log_csv('BROADCAST', 'FLAG_CAPTURED')
 
 
@@ -575,15 +584,23 @@ run_auction()
 
 # ── On-Screen Behaviour Labels ─────────────────────────
 def update_label():
-
     robot.setLabel(robot_id,
         f'{robot_name}: {current_state.name}',
-        0.02,                                  
-        0.02 + robot_id * 0.05,                
-        0.07,                                  
-        0xFFFFFF,                              
-        0.0,                                   
-        'Arial'                                
+        0.02,
+        0.02 + robot_id * 0.06,
+        0.07,
+        0xFFFFFF,
+        0.0,
+        'Arial'
+    )
+    robot.setLabel(robot_id + 2,
+        f'  {tm_info}  tx:{last_sent}  rx:{last_recv}',
+        0.02,
+        0.048 + robot_id * 0.06,
+        0.055,
+        0x88FF88,
+        0.0,
+        'Arial'
     )
 
 # ── Main Control Loop ─────────────────────────────────────────
