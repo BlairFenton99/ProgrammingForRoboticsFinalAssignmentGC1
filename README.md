@@ -80,6 +80,37 @@ When a Raider reaches its home base pad it stops. Once both Raiders are home the
 
 **RETURN_TO_BASE path** — both the flag carrier and the escort route via a lane-side waypoint (north: `y=+0.32`, south: `y=-0.26`) before heading home when east of x=0.60, avoiding the flag wall at x=0.73.
 
+```mermaid
+flowchart TD
+    T(["⟳ tick"]) --> S1
+
+    S1{"obstacle\ndetected?"}
+    S1 -->|yes| AO["🟥 AVOID_OBSTACLE\nspin away from sensors"]
+    S1 -->|no| S2
+
+    S2{"stuck or\navoidance loop?"}
+    S2 -->|yes| REC["🟧 RECOVERY\nreverse → turn"]
+    S2 -->|no| S3
+
+    S3{"guard in camera\nor teammate warned?"}
+    S3 -->|yes| EG["🟨 EVADE_GUARD\nsteer from guard bearing\n+ broadcast prediction"]
+    S3 -->|no| S4
+
+    S4{"has flag or\nescort mode?"}
+    S4 -->|yes| RTB["🟦 RETURN_TO_BASE"]
+    S4 -->|no| SF["🟩 SEEK_FLAG"]
+
+    RTB --> RW{"east of\nflag wall?"}
+    RW -->|yes| WP["→ lane return waypoint\n→ HOME_BASE"]
+    RW -->|no| HB["→ HOME_BASE"]
+
+    SF --> SA{"seek_phase?"}
+    SA -->|approach| SD{"guard sighting\nwithin 0.40m\nof lane waypoint?"}
+    SD -->|"yes + alt lane clear"| DT["→ alternate lane\n🟠 guard detour!"]
+    SD -->|no| NL["→ assigned lane waypoint"]
+    SA -->|flag| FL["→ FLAG_POS"]
+```
+
 ---
 
 ## Guard Behaviour Tree
@@ -104,6 +135,31 @@ All messages are JSON strings on Emitter/Receiver channel 1. Each Raider ignores
 | `FLAG_CAPTURED` | Once on grab | Teammate enters escort mode and returns to base; both stop on arrival |
 
 **Failure handling** — no `BID` reply → take nearest lane; no heartbeat for 5 s → SOLO mode (coordination off, full BT still runs).
+
+```mermaid
+sequenceDiagram
+    participant A as raider_a
+    participant B as raider_b
+
+    Note over A,B: t = 0 — lane auction
+    A->>B: BID (north_cost, south_cost)
+    B->>A: BID (north_cost, south_cost)
+    Note over A,B: optimal assignment — A→north, B→south
+
+    loop every 0.5 s
+        A->>B: HEARTBEAT (pos, has_flag)
+        B->>A: HEARTBEAT (pos, has_flag)
+    end
+
+    Note over A: guard spotted — predicts position
+    A->>B: GUARD_SEEN (predicted_pos)
+    Note over B: within 0.28 m → evade immediately
+    Note over B: sighting stored → lane detour if near waypoint
+
+    Note over A: reaches flag
+    A->>B: FLAG_CAPTURED
+    Note over B: enters escort mode → returns to base
+```
 
 ---
 
